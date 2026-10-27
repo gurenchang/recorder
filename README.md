@@ -4,7 +4,7 @@ A Fabric mod for Minecraft 26.1.2 that records the raw packets a server sends yo
 
 This is a port of [Toshimichi0915/recorder](https://github.com/Toshimichi0915/recorder), originally a Forge mod for Minecraft 1.8.9.
 
-Requires [Fabric Loader](https://fabricmc.net/use/) 0.20.1 or later and [Fabric API](https://modrinth.com/mod/fabric-api). Drop `recorder.jar` into `.minecraft/mods`.
+**[Download the latest build](https://github.com/gurenchang/recorder/releases/latest/download/recorder.jar)** and drop it into `.minecraft/mods`. Requires [Fabric Loader](https://fabricmc.net/use/) 0.20.1 or later and [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Usage
 
