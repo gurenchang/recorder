@@ -1,56 +1,52 @@
 package net.toshimichi.recorder.gui;
 
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiButton;
-import net.minecraft.client.renderer.GlStateManager;
-import net.minecraft.util.MathHelper;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.AbstractSliderButton;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.network.chat.Component;
 import net.toshimichi.recorder.Replay;
 
-// GuiOptionSlider without the GameSettings coupling; jumps on release so dragging does not reload the world per pixel
-public class SeekSlider extends GuiButton {
+// follows the replay while left alone; jumps on release so dragging does not reload the world per pixel
+public class SeekSlider extends AbstractSliderButton {
 
     private final Replay replay;
-    private float value;
     private boolean dragging;
 
-    public SeekSlider(int id, int x, int y, int width, Replay replay) {
-        super(id, x, y, width, 20, "");
+    public SeekSlider(int x, int y, int width, Replay replay) {
+        super(x, y, width, 20, Component.empty(), 0);
         this.replay = replay;
+        follow();
+    }
+
+    private void follow() {
+        value = replay.duration() == 0 ? 0 : (double) replay.elapsed() / replay.duration();
+        updateMessage();
     }
 
     @Override
-    protected int getHoverState(boolean mouseOver) {
-        return 0;
-    }
-
-    // GuiButton.drawButton calls this every frame, before it draws the label
-    @Override
-    protected void mouseDragged(Minecraft mc, int mouseX, int mouseY) {
-        if (!visible) return;
-
-        if (dragging) {
-            value = MathHelper.clamp_float((mouseX - (xPosition + 4)) / (float) (width - 8), 0, 1);
-        } else {
-            value = replay.duration() == 0 ? 0 : (float) replay.elapsed() / replay.duration();
-        }
-        displayString = format(target()) + " / " + format(replay.duration());
-
-        mc.getTextureManager().bindTexture(buttonTextures);
-        GlStateManager.color(1, 1, 1, 1);
-        int knob = xPosition + (int) (value * (width - 8));
-        drawTexturedModalRect(knob, yPosition, 0, 66, 4, 20);
-        drawTexturedModalRect(knob + 4, yPosition, 196, 66, 4, 20);
+    public void extractWidgetRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
+        if (!dragging) follow();
+        super.extractWidgetRenderState(graphics, mouseX, mouseY, a);
     }
 
     @Override
-    public boolean mousePressed(Minecraft mc, int mouseX, int mouseY) {
-        if (!super.mousePressed(mc, mouseX, mouseY)) return false;
+    protected void updateMessage() {
+        setMessage(Component.literal(format(target()) + " / " + format(replay.duration())));
+    }
+
+    @Override
+    protected void applyValue() {
+    }
+
+    @Override
+    public void onClick(MouseButtonEvent event, boolean doubleClick) {
+        super.onClick(event, doubleClick);
         dragging = true;
-        return true;
     }
 
     @Override
-    public void mouseReleased(int mouseX, int mouseY) {
+    public void onRelease(MouseButtonEvent event) {
+        super.onRelease(event);
         if (!dragging) return;
         dragging = false;
         replay.jump(target());

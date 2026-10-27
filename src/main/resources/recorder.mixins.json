@@ -1,0 +1,39 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "net.toshimichi.recorder.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "AccessorBiomeManager",
+    "AccessorClientClockManager",
+    "AccessorClientLevel",
+    "AccessorClientLevelData",
+    "AccessorClockInstance",
+    "AccessorConnection",
+    "AccessorLivingEntity",
+    "AccessorMultiPlayerGameMode",
+    "AccessorPlayer",
+    "AccessorPlayerInfoUpdatePacket",
+    "AccessorPlayerTabOverlay",
+    "InvokerTagNetworkSerialization",
+    "MixinAbstractClientPlayer",
+    "MixinClientChunkCache",
+    "MixinClientLevel",
+    "MixinConnection",
+    "MixinEntity",
+    "MixinGameRenderer",
+    "MixinGui",
+    "MixinItemInHandRenderer",
+    "MixinKeyboardHandler",
+    "MixinLivingEntityRenderer",
+    "MixinMinecraft",
+    "MixinMouseHandler",
+    "MixinPacketDecoder",
+    "MixinPacketEncoder",
+    "MixinPauseScreen",
+    "MixinTitleScreen"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -15,9 +15,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: |
-            8
-            17
+          java-version: 25
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew build
       - run: gh release create "build-${{ github.run_number }}" build/libs/recorder.jar --target "$GITHUB_SHA" --generate-notes

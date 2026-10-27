@@ -1,15 +1,18 @@
 package net.toshimichi.recorder.gui;
 
-import net.minecraft.client.gui.GuiButton;
-import net.minecraft.client.gui.GuiScreen;
-import net.minecraft.client.gui.GuiSlot;
-import net.minecraft.client.gui.GuiYesNo;
-import net.minecraft.client.gui.GuiYesNoCallback;
-import net.minecraft.util.EnumChatFormatting;
+import com.mojang.logging.LogUtils;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.ObjectSelectionList;
+import net.minecraft.client.gui.screens.ConfirmScreen;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
 import net.toshimichi.recorder.Recording;
 import net.toshimichi.recorder.Replay;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import org.slf4j.Logger;
 
 import java.io.File;
 import java.io.IOException;
@@ -18,142 +21,136 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 
-public class RecordingsScreen extends GuiScreen implements GuiYesNoCallback {
+public class RecordingsScreen extends Screen {
 
-    private static final Logger log = LogManager.getLogger();
-    private static final int REPLAY = 0;
-    private static final int DELETE = 1;
-    private static final int DONE = 2;
-    private static final int CONVERT = 3;
+    private static final Logger log = LogUtils.getLogger();
 
-    private final GuiScreen parent;
-    private List<File> files = new ArrayList<>();
-    private int selected = -1;
+    private final Screen parent;
     private RecordingList list;
-    private GuiButton replayButton;
-    private GuiButton deleteButton;
-    private GuiButton convertButton;
-    private String status = "";
+    private Button replayButton;
+    private Button deleteButton;
+    private Button convertButton;
+    private Component status = Component.empty();
 
-    public RecordingsScreen(GuiScreen parent) {
+    public RecordingsScreen(Screen parent) {
+        super(Component.literal("Recordings"));
         this.parent = parent;
     }
 
     @Override
-    public void initGui() {
-        refresh();
-        list = new RecordingList();
-        buttonList.add(replayButton = new GuiButton(REPLAY, width / 2 - 154, height - 52, 100, 20, "Replay"));
-        buttonList.add(convertButton = new GuiButton(CONVERT, width / 2 - 50, height - 52, 100, 20, "Convert to World"));
-        buttonList.add(deleteButton = new GuiButton(DELETE, width / 2 + 54, height - 52, 100, 20, "Delete"));
-        buttonList.add(new GuiButton(DONE, width / 2 - 100, height - 28, 200, 20, "Done"));
+    protected void init() {
+        list = addRenderableWidget(new RecordingList(files()));
+        replayButton = addRenderableWidget(Button.builder(Component.literal("Replay"), button -> replay())
+                .bounds(width / 2 - 154, height - 52, 100, 20).build());
+        convertButton = addRenderableWidget(Button.builder(Component.literal("Convert to World"), button -> convert())
+                .bounds(width / 2 - 50, height - 52, 100, 20).build());
+        deleteButton = addRenderableWidget(Button.builder(Component.literal("Delete"), button -> delete())
+                .bounds(width / 2 + 54, height - 52, 100, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, button -> onClose())
+                .bounds(width / 2 - 100, height - 28, 200, 20).build());
+        updateButtons();
     }
 
     // timestamped names sort chronologically, so reversed is newest first
-    private void refresh() {
+    private static List<File> files() {
         File[] found = Recording.directory().listFiles((dir, name) -> name.endsWith(".mcrc"));
-        files = found == null ? new ArrayList<>() : new ArrayList<>(Arrays.asList(found));
+        List<File> files = found == null ? new ArrayList<>() : new ArrayList<>(Arrays.asList(found));
         files.sort(Comparator.comparing(File::getName).reversed());
-        selected = -1;
+        return files;
+    }
+
+    private File selected() {
+        RecordingList.Entry entry = list.getSelected();
+        return entry != null ? entry.file : null;
+    }
+
+    private void updateButtons() {
+        replayButton.active = convertButton.active = deleteButton.active = selected() != null;
     }
 
     @Override
-    public void updateScreen() {
-        replayButton.enabled = convertButton.enabled = deleteButton.enabled = selected >= 0;
+    public void tick() {
+        updateButtons();
     }
 
-    @Override
-    protected void actionPerformed(GuiButton button) {
-        switch (button.id) {
-            case REPLAY:
-                replay();
-                break;
-            case CONVERT:
-                convert();
-                break;
-            case DELETE:
-                mc.displayGuiScreen(new GuiYesNo(this, "Delete this recording?", files.get(selected).getName(), DELETE));
-                break;
-            case DONE:
-                mc.displayGuiScreen(parent);
-                break;
-        }
-    }
-
-    @Override
-    public void confirmClicked(boolean result, int id) {
-        if (result && !files.get(selected).delete()) status = EnumChatFormatting.RED + "Could not delete the file";
-        mc.displayGuiScreen(this); // re-runs initGui, which refreshes the list
+    private void delete() {
+        File file = selected();
+        if (file == null) return;
+        minecraft.setScreen(new ConfirmScreen(confirmed -> {
+            if (confirmed && !file.delete()) status = Component.literal("Could not delete the file").withStyle(ChatFormatting.RED);
+            minecraft.setScreen(this); // re-runs init, which refreshes the list
+        }, Component.literal("Delete this recording?"), Component.literal(file.getName())));
     }
 
     private void replay() {
-        if (selected < 0) return;
-        File file = files.get(selected);
+        File file = selected();
+        if (file == null) return;
         try {
             Replay.start(file, this);
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             log.error("Failed to open {}", file, e);
-            status = EnumChatFormatting.RED + e.getMessage();
+            status = Component.literal(String.valueOf(e.getMessage())).withStyle(ChatFormatting.RED);
+            if (minecraft.screen != this) minecraft.setScreen(this);
         }
     }
 
     private void convert() {
-        File file = files.get(selected);
+        File file = selected();
+        if (file == null) return;
         try {
-            status = "Saved as world " + Replay.convert(file, this);
-        } catch (IOException e) {
+            status = Component.literal("Saved as world " + Replay.convert(file, this));
+        } catch (IOException | RuntimeException e) {
             log.error("Failed to convert {}", file, e);
-            status = EnumChatFormatting.RED + e.getMessage();
+            status = Component.literal(String.valueOf(e.getMessage())).withStyle(ChatFormatting.RED);
+            if (minecraft.screen != this) minecraft.setScreen(this);
         }
     }
 
     @Override
-    public void handleMouseInput() throws IOException {
-        super.handleMouseInput();
-        list.handleMouseInput();
+    public void onClose() {
+        minecraft.setScreen(parent);
     }
 
     @Override
-    public void drawScreen(int mouseX, int mouseY, float partialTicks) {
-        list.drawScreen(mouseX, mouseY, partialTicks);
-        drawCenteredString(fontRendererObj, "Recordings", width / 2, 16, 0xFFFFFF);
-        drawCenteredString(fontRendererObj, status, width / 2, height - 66, 0xA0A0A0);
-        super.drawScreen(mouseX, mouseY, partialTicks);
+    public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
+        super.extractRenderState(graphics, mouseX, mouseY, a);
+        graphics.centeredText(font, title, width / 2, 16, 0xFFFFFFFF);
+        graphics.centeredText(font, status, width / 2, height - 66, 0xFFA0A0A0);
     }
 
-    private class RecordingList extends GuiSlot {
+    private class RecordingList extends ObjectSelectionList<RecordingList.Entry> {
 
-        RecordingList() {
-            super(RecordingsScreen.this.mc, RecordingsScreen.this.width, RecordingsScreen.this.height,
-                    32, RecordingsScreen.this.height - 76, 24);
+        RecordingList(List<File> files) {
+            super(RecordingsScreen.this.minecraft, RecordingsScreen.this.width, RecordingsScreen.this.height - 32 - 76, 32, 24);
+            for (File file : files) addEntry(new Entry(file));
         }
 
-        @Override
-        protected int getSize() {
-            return files.size();
-        }
+        private class Entry extends ObjectSelectionList.Entry<Entry> {
 
-        @Override
-        protected void elementClicked(int index, boolean doubleClick, int mouseX, int mouseY) {
-            selected = index;
-            if (doubleClick) replay();
-        }
+            private final File file;
 
-        @Override
-        protected boolean isSelected(int index) {
-            return index == selected;
-        }
+            Entry(File file) {
+                this.file = file;
+            }
 
-        @Override
-        protected void drawBackground() {
-            drawDefaultBackground();
-        }
+            @Override
+            public void extractContent(GuiGraphicsExtractor graphics, int mouseX, int mouseY, boolean hovered, float a) {
+                graphics.text(font, file.getName(), getContentX() + 2, getContentY() + 1, 0xFFFFFFFF);
+                graphics.text(font, String.format("%.1f MB", file.length() / 1048576.0), getContentX() + 2, getContentY() + 12, 0xFF808080);
+            }
 
-        @Override
-        protected void drawSlot(int index, int x, int y, int rowHeight, int mouseX, int mouseY) {
-            File file = files.get(index);
-            drawString(fontRendererObj, file.getName(), x + 2, y + 1, 0xFFFFFF);
-            drawString(fontRendererObj, String.format("%.1f MB", file.length() / 1048576.0), x + 2, y + 12, 0x808080);
+            @Override
+            public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+                RecordingList.this.setSelected(this);
+                updateButtons();
+                if (doubleClick) replay();
+                return super.mouseClicked(event, doubleClick);
+            }
+
+            @Override
+            public Component getNarration() {
+                return Component.translatable("narrator.select", file.getName());
+            }
         }
     }
 }

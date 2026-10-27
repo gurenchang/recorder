@@ -1,90 +1,133 @@
 package net.toshimichi.recorder;
 
 import com.mojang.authlib.GameProfile;
+import com.mojang.logging.LogUtils;
 import io.netty.buffer.Unpooled;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.embedded.EmbeddedChannel;
-import io.netty.util.concurrent.Future;
-import io.netty.util.concurrent.GenericFutureListener;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.entity.AbstractClientPlayer;
-import net.minecraft.client.entity.EntityOtherPlayerMP;
-import net.minecraft.client.entity.EntityPlayerSP;
-import net.minecraft.client.gui.GuiScreen;
-import net.minecraft.client.gui.inventory.GuiContainer;
-import net.minecraft.client.multiplayer.WorldClient;
-import net.minecraft.client.network.NetHandlerPlayClient;
-import net.minecraft.client.network.NetworkPlayerInfo;
-import net.minecraft.network.EnumConnectionState;
-import net.minecraft.network.EnumPacketDirection;
-import net.minecraft.network.NetworkManager;
-import net.minecraft.network.Packet;
-import net.minecraft.network.PacketBuffer;
-import net.minecraft.entity.DataWatcher;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.player.EntityPlayer;
-import net.minecraft.inventory.Container;
-import net.minecraft.block.Block;
-import net.minecraft.block.material.Material;
-import net.minecraft.block.state.IBlockState;
-import net.minecraft.network.play.client.C03PacketPlayer;
-import net.minecraft.network.play.client.C07PacketPlayerDigging;
-import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
-import net.minecraft.network.play.client.C09PacketHeldItemChange;
-import net.minecraft.network.play.client.C0APacketAnimation;
-import net.minecraft.network.play.client.C0BPacketEntityAction;
-import net.minecraft.network.play.client.C0DPacketCloseWindow;
-import net.minecraft.network.play.client.C0EPacketClickWindow;
-import net.minecraft.network.play.server.S01PacketJoinGame;
-import net.minecraft.network.play.server.S06PacketUpdateHealth;
-import net.minecraft.network.play.server.S07PacketRespawn;
-import net.minecraft.network.play.server.S08PacketPlayerPosLook;
-import net.minecraft.network.play.server.S12PacketEntityVelocity;
-import net.minecraft.network.play.server.S1BPacketEntityAttach;
-import net.minecraft.network.play.server.S19PacketEntityStatus;
-import net.minecraft.network.play.server.S1CPacketEntityMetadata;
-import net.minecraft.network.play.server.S20PacketEntityProperties;
-import net.minecraft.network.play.server.S38PacketPlayerListItem;
-import net.minecraft.network.play.server.S39PacketPlayerAbilities;
-import net.minecraft.init.Blocks;
-import net.minecraft.item.ItemStack;
-import net.minecraft.util.BlockPos;
-import net.minecraft.util.MathHelper;
-import net.minecraft.util.EnumFacing;
-import net.minecraft.util.MovingObjectPosition;
-import net.minecraft.util.Vec3;
-import net.minecraft.world.World;
-import net.minecraft.world.WorldSettings;
-import net.minecraftforge.fml.common.network.handshake.NetworkDispatcher;
-import net.toshimichi.recorder.mixin.AccessorS38PacketPlayerListItem;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.lwjgl.input.Mouse;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.multiplayer.ClientConfigurationPacketListenerImpl;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.client.multiplayer.ClientRegistryLayer;
+import net.minecraft.client.multiplayer.CommonListenerCookie;
+import net.minecraft.client.multiplayer.LevelLoadTracker;
+import net.minecraft.client.multiplayer.PlayerInfo;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.player.RemotePlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.RegistryAccess;
+import net.minecraft.network.Connection;
+import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.PacketListener;
+import net.minecraft.network.ProtocolInfo;
+import net.minecraft.server.ServerLinks;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.network.protocol.common.ClientboundDisconnectPacket;
+import net.minecraft.network.protocol.common.ClientboundResourcePackPopPacket;
+import net.minecraft.network.protocol.common.ClientboundResourcePackPushPacket;
+import net.minecraft.network.protocol.common.ClientboundShowDialogPacket;
+import net.minecraft.network.protocol.common.ClientboundTransferPacket;
+import net.minecraft.network.protocol.configuration.ClientboundCodeOfConductPacket;
+import net.minecraft.network.protocol.configuration.ConfigurationProtocols;
+import net.minecraft.network.protocol.game.ClientboundBundleDelimiterPacket;
+import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
+import net.minecraft.network.protocol.game.ClientboundDisguisedChatPacket;
+import net.minecraft.network.protocol.game.ClientboundHurtAnimationPacket;
+import net.minecraft.network.protocol.game.ClientboundLoginPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerChatPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
+import net.minecraft.network.protocol.game.ClientboundRespawnPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.network.protocol.game.ClientboundSetHealthPacket;
+import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
+import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
+import net.minecraft.network.protocol.game.GamePacketTypes;
+import net.minecraft.network.protocol.game.ServerboundAttackPacket;
+import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
+import net.minecraft.network.protocol.game.ServerboundContainerClosePacket;
+import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
+import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
+import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
+import net.minecraft.network.protocol.game.ServerboundPlayerInputPacket;
+import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
+import net.minecraft.network.protocol.game.ServerboundSwingPacket;
+import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
+import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.util.Mth;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.PositionMoveRotation;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.flag.FeatureFlags;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.context.UseOnContext;
+import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.GameMasterBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.Vec3;
+import net.toshimichi.recorder.mixin.AccessorLivingEntity;
+import net.toshimichi.recorder.mixin.AccessorPlayer;
+import net.toshimichi.recorder.mixin.AccessorPlayerInfoUpdatePacket;
+import org.slf4j.Logger;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 /**
- * Feeds a recording into a fresh NetHandlerPlayClient over a channel that goes nowhere.
- * Clientbound packets drive the world. The viewer is a spectator; the recorded player is a puppet entity
- * driven by its own serverbound packets (the viewer's mode can be switched from the pause menu). Left-click an entity to see through its eyes, sneak to let go.
+ * Feeds a recording into a fresh client connection over a channel that goes nowhere, starting from the configuration
+ * phase like a real join. Clientbound packets drive the world. The viewer is a spectator; the recorded player is a
+ * puppet entity driven by its own serverbound packets (the viewer's mode can be switched from the pause menu).
+ * Left-click an entity to see through its eyes, sneak to let go.
  */
 public final class Replay {
 
-    private static final Logger log = LogManager.getLogger();
+    private static final Logger log = LogUtils.getLogger();
     private static Replay current;
-    private static final int PUPPET_ID = Integer.MIN_VALUE + 7; // nothing a server hands out
+    public static final int PUPPET_ID = Integer.MIN_VALUE + 7; // nothing a server hands out
+    private static final int LOGIN = Protocols.clientboundPlayId(GamePacketTypes.CLIENTBOUND_LOGIN);
+    private static final int POSITION = Protocols.clientboundPlayId(GamePacketTypes.CLIENTBOUND_PLAYER_POSITION);
+    private static final int PASSENGERS = Protocols.clientboundPlayId(GamePacketTypes.CLIENTBOUND_SET_PASSENGERS);
+    private static final int PLAYER_ACTION = Protocols.serverboundPlayId(GamePacketTypes.SERVERBOUND_PLAYER_ACTION);
+    private static final List<Integer> MOVES = List.of(
+            Protocols.serverboundPlayId(GamePacketTypes.SERVERBOUND_MOVE_PLAYER_POS),
+            Protocols.serverboundPlayId(GamePacketTypes.SERVERBOUND_MOVE_PLAYER_POS_ROT),
+            Protocols.serverboundPlayId(GamePacketTypes.SERVERBOUND_MOVE_PLAYER_ROT),
+            Protocols.serverboundPlayId(GamePacketTypes.SERVERBOUND_MOVE_PLAYER_STATUS_ONLY));
 
-
-    private final Minecraft mc = Minecraft.getMinecraft();
-    private final GuiScreen parent;
+    private final Minecraft mc = Minecraft.getInstance();
+    private final Screen parent;
     private final List<RecordingFile.Entry> entries;
     private final List<Move> moves; // where the recorded player went, read ahead of the replay
     private final GameProfile profile; // who recorded it, not who is watching
-    private NetHandlerPlayClient handler;
-    private EntityOtherPlayerMP puppet;
-    private byte skinParts; // hat, jacket, sleeves...: outlives the puppet across respawns
+    // the viewer gets a UUID of their own: the recorded player's, often the same account, is the puppet's
+    private final GameProfile viewer;
+    private Connection connection;
+    private Puppet puppet;
+    // the recorded player's own metadata, which is the puppet's: flags, pose, skin layers. Outlives the puppet across respawns
+    private final Map<Integer, SynchedEntityData.DataValue<?>> ownData = new LinkedHashMap<>();
     private boolean clickWasDown;
     private BlockPos digPos; // the puppet's cracks: the server shows them to everyone but the digger
     private long digStart;
@@ -95,39 +138,49 @@ public final class Replay {
     private long base;       // replay millis at the last resume or jump
     private long resumedAt;  // wall clock at the last resume or jump
     private WorldExport export; // only while converting
-    private WorldSettings.GameType gameType = WorldSettings.GameType.SPECTATOR; // the viewer's, outlives seeks
+    private GameType gameType = GameType.SPECTATOR; // the viewer's, outlives seeks
 
-    private Replay(GuiScreen parent, RecordingFile.Contents contents) {
+    private Replay(Screen parent, RecordingFile.Contents contents) throws IOException {
+        if (contents.protocol != net.minecraft.SharedConstants.getProtocolVersion()) {
+            throw new IOException("Recorded on Minecraft " + contents.gameVersion + ", which this version cannot replay");
+        }
         this.parent = parent;
         this.entries = contents.entries;
         this.moves = moves(entries);
         // version 1 files never stored it; the viewer is the best guess
-        this.profile = contents.profile != null ? contents.profile : mc.getSession().getProfile();
+        this.profile = contents.profile != null ? contents.profile : mc.getGameProfile();
+        this.viewer = new GameProfile(UUID.randomUUID(), mc.getUser().getName());
     }
 
     public static Replay current() {
         return current;
     }
 
-    public static void start(File file, GuiScreen parent) throws IOException {
+    public static void start(File file, Screen parent) throws IOException {
         current = new Replay(parent, RecordingFile.readAll(file));
         current.connect();
-        current.resumedAt = Render.clock();
+        current.resumedAt = System.currentTimeMillis();
         current.tick();
     }
 
     // the whole recording in one go, nothing drawn in between; returns the new save's folder name
-    public static String convert(File file, GuiScreen parent) throws IOException {
+    public static String convert(File file, Screen parent) throws IOException {
         Replay replay = new Replay(parent, RecordingFile.readAll(file));
         replay.export = new WorldExport(file.getName().replaceFirst("\\.mcrc$", ""));
+        WorldExport.current = replay.export;
         replay.connect();
         try {
             while (replay.index < replay.entries.size()) replay.feed(replay.entries.get(replay.index++));
-            if (replay.mc.theWorld != null) replay.export.saveAll(replay.mc.theWorld);
+            // nothing ticked, so the puppet never walked: put it where the recorded player last was
+            if (replay.puppet != null && !replay.moves.isEmpty()) {
+                Move last = replay.moves.getLast();
+                replay.puppet.snapTo(last.x(), last.y(), last.z(), last.yaw(), last.pitch());
+            }
+            if (replay.mc.level != null) replay.export.saveAll(replay.mc.level);
         } finally {
-            replay.export.finish(replay.puppet != null ? replay.puppet : replay.mc.thePlayer);
-            replay.mc.loadWorld((WorldClient) null);
-            replay.mc.displayGuiScreen(parent);
+            WorldExport.current = null;
+            replay.export.finish(replay.puppet != null ? replay.puppet : replay.mc.player);
+            replay.mc.disconnect(parent, false);
         }
         return replay.export.directory;
     }
@@ -138,69 +191,69 @@ public final class Replay {
 
     // the wall clock keeps running past the last entry; the replay does not
     public long elapsed() {
-        return Math.min(duration(), paused ? base : base + Render.clock() - resumedAt);
+        return Math.min(duration(), paused ? base : base + System.currentTimeMillis() - resumedAt);
     }
 
     public long duration() {
         return entries.isEmpty() ? 0 : entries.get(entries.size() - 1).time;
     }
 
-    public WorldSettings.GameType getGameType() {
+    public GameType getGameType() {
         return gameType;
     }
 
     // the recorded player's body, else null
     public static Puppet recorded() {
-        return current != null ? (Puppet) current.puppet : null;
+        return current != null ? current.puppet : null;
     }
 
     // the recorded player while the viewer looks through their eyes, else null
     public static Puppet possessed() {
         Puppet puppet = recorded();
-        return puppet != null && Minecraft.getMinecraft().getRenderViewEntity() == puppet ? puppet : null;
+        return puppet != null && Minecraft.getInstance().getCameraEntity() == puppet ? puppet : null;
     }
 
     public void cycleGameType() {
-        switch (gameType) {
-            case SPECTATOR: gameType = WorldSettings.GameType.CREATIVE; break;
-            case CREATIVE: gameType = WorldSettings.GameType.SURVIVAL; break;
-            default: gameType = WorldSettings.GameType.SPECTATOR; break;
-        }
+        gameType = switch (gameType) {
+            case SPECTATOR -> GameType.CREATIVE;
+            case CREATIVE -> GameType.SURVIVAL;
+            default -> GameType.SPECTATOR;
+        };
     }
 
     public void togglePause() {
         base = elapsed();
-        resumedAt = Render.clock();
+        resumedAt = System.currentTimeMillis();
         paused = !paused;
     }
 
     // backwards means a new world fast-forwarded from the start: packets cannot be undone
     public void jump(long millis) {
-        EntityPlayerSP before = null;
+        LocalPlayer before = null;
         if (millis < elapsed()) {
-            before = mc.thePlayer;
-            mc.loadWorld((WorldClient) null);
+            before = mc.player;
+            Screen screen = mc.screen;
+            mc.disconnect(screen != null ? screen : parent, false, false);
             connect();
         }
         base = millis;
-        resumedAt = Render.clock();
+        resumedAt = System.currentTimeMillis();
         tick();
         // the new world puts the viewer back at the snapshot; keep them where they were, unless that was another dimension
-        EntityPlayerSP player = mc.thePlayer;
-        if (before != null && player != null && player.dimension == before.dimension) {
-            player.setPositionAndRotation(before.posX, before.posY, before.posZ, before.rotationYaw, before.rotationPitch);
+        LocalPlayer player = mc.player;
+        if (before != null && player != null && player.level().dimension() == before.level().dimension()) {
+            player.snapTo(before.getX(), before.getY(), before.getZ(), before.getYRot(), before.getXRot());
         }
     }
 
     public void exit() {
         current = null;
-        mc.loadWorld((WorldClient) null);
-        mc.displayGuiScreen(parent);
+        mc.disconnect(parent, false);
     }
 
-    // called every client tick; the handler is swapped out from under us when the world is left any other way
+    // called every client tick; the connection is swapped out from under us when the world is left any other way
     public void tick() {
-        if (index > 0 && mc.getNetHandler() != handler) {
+        if (index > 0 && (!connection.isConnected() || mc.getConnection() != null && mc.getConnection().getConnection() != connection)) {
             current = null;
             return;
         }
@@ -210,173 +263,234 @@ public final class Replay {
             feed(entries.get(index++));
         }
 
-        if (puppet == null) return;
+        if (puppet == null || mc.player == null) return;
         move(elapsed);
         if (digPos != null) {
-            mc.theWorld.sendBlockBreakProgress(PUPPET_ID, digPos, (int) Math.min(9, (elapsed - digStart) * 10 / digDuration) - 1);
+            mc.level.destroyBlockProgress(PUPPET_ID, digPos, (int) Math.min(9, (elapsed - digStart) * 10 / digDuration) - 1);
         }
         // the recording may carry the server's own game mode changes; the viewer keeps the one picked
-        if (mc.playerController.getCurrentGameType() != gameType) {
-            mc.playerController.setGameType(gameType);
-        }
+        if (mc.gameMode.getPlayerMode() != gameType) mc.gameMode.setLocalMode(gameType);
 
-        boolean down = Mouse.isButtonDown(0);
-        MovingObjectPosition hit = mc.objectMouseOver;
-        if (down && !clickWasDown && mc.currentScreen == null && hit != null
-                && hit.typeOfHit == MovingObjectPosition.MovingObjectType.ENTITY) {
-            mc.setRenderViewEntity(hit.entityHit);
+        boolean down = mc.options.keyAttack.isDown();
+        if (down && !clickWasDown && mc.screen == null && mc.hitResult instanceof EntityHitResult hit) {
+            mc.setCameraEntity(hit.getEntity());
         }
         clickWasDown = down;
 
-        Entity view = mc.getRenderViewEntity();
-        if (view != mc.thePlayer && (mc.gameSettings.keyBindSneak.isKeyDown() || view.isDead)) {
+        Entity view = mc.getCameraEntity();
+        if (view != null && view != mc.player && (mc.options.keyShift.isDown() || view.isRemoved())) {
             // let go where they were looking from, as vanilla spectating leaves you
-            mc.thePlayer.setPositionAndRotation(view.posX, view.posY, view.posZ, view.rotationYaw, view.rotationPitch);
-            mc.setRenderViewEntity(mc.thePlayer);
+            mc.player.snapTo(view.getX(), view.getY(), view.getZ(), view.getYRot(), view.getXRot());
+            mc.setCameraEntity(mc.player);
         }
+    }
+
+    // after the entities have ticked: through the recorded player's eyes, the first person hand is drawn from the
+    // viewer's own player, so it takes on the puppet's look (which its sway lags behind) and its swing
+    public void afterTick() {
+        Puppet puppet = possessed();
+        LocalPlayer player = mc.player;
+        if (puppet == null || player == null) return;
+        player.setXRot(puppet.getXRot());
+        player.setYRot(puppet.getYRot());
+        player.xRotO = puppet.xRotO;
+        player.yRotO = puppet.yRotO;
+        player.swinging = puppet.swinging;
+        player.swingingArm = puppet.swingingArm;
+        player.swingTime = puppet.swingTime;
+        player.attackAnim = puppet.attackAnim;
+        player.oAttackAnim = puppet.oAttackAnim;
     }
 
     // once the snapshot has placed the viewer: a body for the recorded player, and freedom for the viewer
     private void spawnPuppet() {
-        EntityPlayerSP player = mc.thePlayer;
+        LocalPlayer player = mc.player;
         // the name and skin the server listed at this point, as a nick plugin may have changed them; the skin is looked up by UUID
-        NetworkPlayerInfo info = handler.getPlayerInfo(profile.getId());
-        puppet = new Puppet(mc.theWorld, info != null ? info.getGameProfile() : profile);
-        puppet.setPositionAndRotation(player.posX, player.posY, player.posZ, player.rotationYaw, player.rotationPitch);
-        puppet.setPositionAndRotation2(player.posX, player.posY, player.posZ, player.rotationYaw, player.rotationPitch, 0, false);
-        // share the arrays: the replayed inventory packets fill the viewer's inventory, the puppet shows it
-        puppet.inventory.mainInventory = player.inventory.mainInventory;
-        puppet.inventory.armorInventory = player.inventory.armorInventory;
-        puppet.inventory.currentItem = player.inventory.currentItem;
-        puppet.capabilities.isCreativeMode = player.capabilities.isCreativeMode; // before the viewer turns spectator
-        puppet.getDataWatcher().updateObject(10, skinParts);
-        mc.theWorld.addEntityToWorld(PUPPET_ID, puppet);
-        mc.playerController.setGameType(gameType);
+        PlayerInfo info = mc.getConnection().getPlayerInfo(profile.id());
+        puppet = new Puppet(mc.level, info != null ? info.getProfile() : profile);
+        puppet.setId(PUPPET_ID);
+        puppet.snapTo(player.getX(), player.getY(), player.getZ(), player.getYRot(), player.getXRot());
+        // share the inventory: the replayed inventory packets fill the viewer's, the puppet shows it
+        ((AccessorPlayer) (Object) puppet).setInventory(player.getInventory());
+        ((AccessorLivingEntity) (Object) puppet).setEquipment(((AccessorLivingEntity) player).getEquipment());
+        puppet.getAbilities().instabuild = player.getAbilities().instabuild; // before the viewer turns spectator
+        if (!ownData.isEmpty()) puppet.getEntityData().assignValues(new ArrayList<>(ownData.values()));
+        mc.level.addEntity(puppet);
+        mc.gameMode.setLocalMode(gameType);
         // step back so the first thing on screen is not the inside of the puppet's head
-        Vec3 look = player.getLookVec();
-        player.setPosition(player.posX - look.xCoord * 3, player.posY + 1, player.posZ - look.zCoord * 3);
+        Vec3 look = player.getLookAngle();
+        player.setPos(player.getX() - look.x * 3, player.getY() + 1, player.getZ() - look.z * 3);
     }
 
     private void connect() {
-        NetworkManager manager = new NetworkManager(EnumPacketDirection.CLIENTBOUND) {
+        connection = new Connection(PacketFlow.CLIENTBOUND) {
             @Override
-            public void sendPacket(Packet packetIn) {
-            }
-
-            @Override
-            public void sendPacket(Packet packetIn, GenericFutureListener<? extends Future<? super Void>> listener,
-                                   GenericFutureListener<? extends Future<? super Void>>... listeners) {
+            public void send(Packet<?> packet, ChannelFutureListener listener, boolean flush) {
             }
         };
-        new EmbeddedChannel(manager); // channelActive gives the manager its channel
-        NetworkDispatcher.allocAndSet(manager); // Forge's handleJoinGame asks it for the dimension
-        manager.setConnectionState(EnumConnectionState.PLAY);
-
-        handler = new NetHandlerPlayClient(mc, parent, manager, mc.getSession().getProfile());
-        manager.setNetHandler(handler);
+        new EmbeddedChannel(connection); // channelActive gives the connection its channel
+        ClientConfigurationPacketListenerImpl listener = new ClientConfigurationPacketListenerImpl(mc, connection, new CommonListenerCookie(
+                new LevelLoadTracker(), viewer, mc.getTelemetryManager().createWorldSessionManager(false, null, null),
+                ClientRegistryLayer.createRegistryAccess().compositeAccess(), FeatureFlags.DEFAULT_FLAGS, null, null, parent,
+                new HashMap<>(), null, Map.of(), ServerLinks.EMPTY, new HashMap<>(), false));
+        connection.setupInboundProtocol(ConfigurationProtocols.CLIENTBOUND, listener);
+        connection.setupOutboundProtocol(ConfigurationProtocols.SERVERBOUND);
         puppet = null;
         digPos = null;
-        skinParts = 0;
+        ownData.clear();
+        health = 0;
         index = 0;
     }
 
-    @SuppressWarnings("unchecked")
     private void feed(RecordingFile.Entry entry) {
-        if (entry.direction == RecordingFile.INPUT) return; // key presses, not packets: a mouse row reads as an S01
-        boolean serverbound = entry.direction == RecordingFile.SERVERBOUND;
+        if (entry.direction == RecordingFile.INPUT) return; // key presses, not packets
         try {
-            Packet packet = decode(entry);
-
-            if (packet instanceof S38PacketPlayerListItem) {
-                ownSkin((S38PacketPlayerListItem) packet);
-                keepSkins((S38PacketPlayerListItem) packet);
-            }
-            if (packet instanceof S1CPacketEntityMetadata && ((S1CPacketEntityMetadata) packet).getEntityId() == mc.thePlayer.getEntityId()) {
-                // the recorded player's own metadata is the puppet's; only the flags (eating, burning...) and the
-                // skin layers, health would kill it off. Absorption goes to the viewer, whose player the hearts read
-                List<DataWatcher.WatchableObject> objects = ((S1CPacketEntityMetadata) packet).func_149376_c();
-                // an empty update decodes as null, not an empty list
-                if (objects != null) for (DataWatcher.WatchableObject object : objects) {
-                    if (object.getDataValueId() == 10) skinParts = (Byte) object.getObject();
-                    if (object.getDataValueId() == 0 && puppet != null) puppet.getDataWatcher().updateObject(0, object.getObject());
-                    if (object.getDataValueId() == 17) mc.thePlayer.setAbsorptionAmount((Float) object.getObject());
-                }
-                if (puppet != null) puppet.getDataWatcher().updateObject(10, skinParts);
+            PacketListener listener = connection.getPacketListener();
+            if (entry.isConfiguration()) {
+                if (entry.isServerbound() || !(listener instanceof ClientConfigurationPacketListenerImpl)) return;
+                Packet<?> packet = Protocols.decode(Protocols.configuration(false), entry.data);
+                if (!skipped(packet)) handle(packet, listener);
                 return;
             }
-
-            if (!serverbound) {
-                if (export != null) export.before(packet, mc.theWorld);
-                // a new world and a new player: like the snapshot, its S08 must reach the handler to close GuiDownloadTerrain
-                if (packet instanceof S01PacketJoinGame || packet instanceof S07PacketRespawn) {
-                    puppet = null;
-                    digPos = null;
-                    health = 0;
-                }
-                if (packet instanceof S06PacketUpdateHealth) health = ((S06PacketUpdateHealth) packet).getHealth();
-                if (puppet == null) {
-                    packet.processPacket(handler);
-                    if (packet instanceof S08PacketPlayerPosLook) spawnPuppet();
-                } else if (packet instanceof S08PacketPlayerPosLook) {
-                    // the puppet's teleport is move()'s; the handler would move the viewer
-                } else if (packet instanceof S39PacketPlayerAbilities) {
-                    // the puppet keeps the creative flag for placement; the rest would shove the spectator around
-                    puppet.capabilities.isCreativeMode = ((S39PacketPlayerAbilities) packet).isCreativeMode();
-                } else if (packet instanceof S1BPacketEntityAttach && ((S1BPacketEntityAttach) packet).getLeash() == 0
-                        && ((S1BPacketEntityAttach) packet).getEntityId() == mc.thePlayer.getEntityId()) {
-                    // the recorded player's ride is the puppet's; the handler would seat the viewer
-                    puppet.mountEntity(mc.theWorld.getEntityByID(((S1BPacketEntityAttach) packet).getVehicleEntityId()));
-                } else if (packet instanceof S19PacketEntityStatus && ((S19PacketEntityStatus) packet).getOpCode() == 2
-                        && ((S19PacketEntityStatus) packet).getEntity(mc.theWorld) == mc.thePlayer) {
-                    // the recorded player's hurt is the puppet's: its red flash, its sound and the shake through its eyes
-                    puppet.handleStatusUpdate((byte) 2);
-                } else if (!(packet instanceof S12PacketEntityVelocity
-                        && ((S12PacketEntityVelocity) packet).getEntityID() == mc.thePlayer.getEntityId())) {
-                    // self velocity would shove the spectator around
-                    packet.processPacket(handler);
-                }
-                // a max health above 20 may arrive after the health it allows, as in the snapshot
-                if (packet instanceof S20PacketEntityProperties && ((S20PacketEntityProperties) packet).getEntityId() == mc.thePlayer.getEntityId()
-                        && health > mc.thePlayer.getHealth()) {
-                    mc.thePlayer.setHealth(health);
-                }
-            } else if (puppet != null) {
-                if (packet instanceof C03PacketPlayer) {
-                    // where it goes is move()'s; break speed drops fivefold in the air
-                    puppet.onGround = ((C03PacketPlayer) packet).isOnGround();
-                } else if (packet instanceof C07PacketPlayerDigging) {
-                    dig((C07PacketPlayerDigging) packet, entry.time);
-                } else if (packet instanceof C08PacketPlayerBlockPlacement) {
-                    place((C08PacketPlayerBlockPlacement) packet);
-                } else if (packet instanceof C0APacketAnimation) {
-                    puppet.swingItem();
-                } else if (packet instanceof C09PacketHeldItemChange) {
-                    puppet.inventory.currentItem = ((C09PacketHeldItemChange) packet).getSlotId();
-                    // the hotbar and the first person hand read the viewer's
-                    mc.thePlayer.inventory.currentItem = puppet.inventory.currentItem;
-                } else if (packet instanceof C0DPacketCloseWindow) {
-                    // the server never echoes a close: the client shuts its own window and only tells the server
-                    if (mc.currentScreen instanceof GuiContainer) mc.thePlayer.closeScreenAndDropStack();
-                } else if (packet instanceof C0EPacketClickWindow) {
-                    // like PlayerControllerMP.windowClick: the server never echoes a click it agrees with, the
-                    // client has already moved the stacks; a refusal resends the whole window
-                    C0EPacketClickWindow click = (C0EPacketClickWindow) packet;
-                    Container container = mc.thePlayer.openContainer;
-                    if (container.windowId == click.getWindowId()) {
-                        container.slotClick(click.getSlotId(), click.getUsedButton(), click.getMode(), mc.thePlayer);
-                    }
-                } else if (packet instanceof C0BPacketEntityAction) {
-                    switch (((C0BPacketEntityAction) packet).getAction()) {
-                        case START_SNEAKING: puppet.setSneaking(true); break;
-                        case STOP_SNEAKING: puppet.setSneaking(false); break;
-                        case START_SPRINTING: puppet.setSprinting(true); break;
-                        case STOP_SPRINTING: puppet.setSprinting(false); break;
-                        default: break;
-                    }
-                }
+            if (!(listener instanceof ClientPacketListener play)) return;
+            if (entry.isServerbound()) {
+                if (puppet != null) serverbound(Protocols.decode(Protocols.serverboundPlay(play.registryAccess()), entry.data), entry.time);
+            } else {
+                clientbound(Protocols.decode(Protocols.clientboundPlay(play.registryAccess()), entry.data), play);
             }
         } catch (Exception e) {
             log.warn("Skipping a packet at {}ms", entry.time, e);
+        }
+    }
+
+    // nothing in a replay may leave it: no disconnects, transfers, resource pack downloads or screens to click through
+    private static boolean skipped(Packet<?> packet) {
+        return packet instanceof ClientboundDisconnectPacket || packet instanceof ClientboundTransferPacket
+                || packet instanceof ClientboundResourcePackPushPacket || packet instanceof ClientboundResourcePackPopPacket
+                || packet instanceof ClientboundShowDialogPacket || packet instanceof ClientboundCodeOfConductPacket
+                || packet instanceof ClientboundBundleDelimiterPacket; // the pipeline's bundler eats these; handled one by one is the same
+    }
+
+    private void clientbound(Packet<?> packet, ClientPacketListener listener) {
+        if (skipped(packet)) return;
+        if (packet instanceof ClientboundPlayerChatPacket chat) {
+            // the chat index and signature cache start where the recording started, not at zero; show it unsigned
+            Component content = chat.unsignedContent() != null ? chat.unsignedContent() : Component.literal(chat.body().content());
+            handle(new ClientboundDisguisedChatPacket(content, chat.chatType()), listener);
+            return;
+        }
+        if (packet instanceof ClientboundPlayerInfoUpdatePacket info) ownSkin(info);
+        if (packet instanceof ClientboundPlayerInfoRemovePacket remove) keepSkins(remove);
+        LocalPlayer player = mc.player;
+        int self = player != null ? player.getId() : Integer.MIN_VALUE;
+        if (packet instanceof ClientboundSetEntityDataPacket data && data.id() == self) {
+            ownData(data);
+            return;
+        }
+
+        if (export != null) export.before(packet, mc.level);
+        // a new world and a new player: like the snapshot, its position must reach the handler to place the viewer
+        if (packet instanceof ClientboundLoginPacket || packet instanceof ClientboundRespawnPacket) {
+            puppet = null;
+            digPos = null;
+            health = 0;
+        }
+        if (packet instanceof ClientboundSetHealthPacket set) health = set.getHealth();
+        if (puppet == null) {
+            handle(packet, listener);
+            if (packet instanceof ClientboundPlayerPositionPacket) spawnPuppet();
+        } else if (packet instanceof ClientboundPlayerPositionPacket) {
+            // the puppet's teleport is move()'s; the handler would move the viewer
+        } else if (packet instanceof ClientboundPlayerAbilitiesPacket abilities) {
+            // the puppet keeps the creative flag for placement; the rest would shove the spectator around
+            puppet.getAbilities().instabuild = abilities.canInstabuild();
+        } else if (packet instanceof ClientboundSetPassengersPacket passengers) {
+            // the recorded player's ride is the puppet's; the handler would seat the viewer
+            handle(withPuppet(passengers, self), listener);
+        } else if (packet instanceof ClientboundHurtAnimationPacket hurt && hurt.id() == self) {
+            // the recorded player's hurt is the puppet's: its red flash, its sound and the shake through its eyes
+            handle(new ClientboundHurtAnimationPacket(PUPPET_ID, hurt.yaw()), listener);
+        } else if (packet instanceof ClientboundDamageEventPacket damage && damage.entityId() == self) {
+            handle(new ClientboundDamageEventPacket(PUPPET_ID, damage.sourceType(), damage.sourceCauseId(), damage.sourceDirectId(), damage.sourcePosition()), listener);
+        } else if (!(packet instanceof ClientboundSetEntityMotionPacket motion && motion.id() == self)) {
+            // self velocity would shove the spectator around
+            handle(packet, listener);
+        }
+        // a max health above 20 may arrive after the health it allows, as in the snapshot
+        if (packet instanceof ClientboundUpdateAttributesPacket attributes && attributes.getEntityId() == self
+                && mc.player != null && health > mc.player.getHealth()) {
+            mc.player.setHealth(health);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends PacketListener> void handle(Packet<T> packet, PacketListener listener) {
+        packet.handle((T) listener);
+    }
+
+    // the recorded player's own metadata is the puppet's, all but the health that would kill it off; the golden hearts
+    // also go to the viewer, whose player the hud reads
+    private void ownData(ClientboundSetEntityDataPacket packet) {
+        int healthId = AccessorLivingEntity.getHealthId().id();
+        int absorptionId = AccessorPlayer.getAbsorptionId().id();
+        List<SynchedEntityData.DataValue<?>> values = new ArrayList<>();
+        for (SynchedEntityData.DataValue<?> value : packet.packedItems()) {
+            if (value.id() == healthId) continue;
+            if (value.id() == absorptionId) mc.player.getEntityData().assignValues(List.of(value));
+            ownData.put(value.id(), value);
+            values.add(value);
+        }
+        if (puppet != null) puppet.getEntityData().assignValues(values);
+    }
+
+    private static ClientboundSetPassengersPacket withPuppet(ClientboundSetPassengersPacket packet, int self) {
+        int[] passengers = packet.getPassengers().clone();
+        for (int i = 0; i < passengers.length; i++) if (passengers[i] == self) passengers[i] = PUPPET_ID;
+        FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
+        try {
+            buf.writeVarInt(packet.getVehicle());
+            buf.writeVarIntArray(passengers);
+            return ClientboundSetPassengersPacket.STREAM_CODEC.decode(buf);
+        } finally {
+            buf.release();
+        }
+    }
+
+    private void serverbound(Packet<?> packet, long time) throws IOException {
+        LocalPlayer player = mc.player;
+        if (packet instanceof ServerboundMovePlayerPacket move) {
+            // where it goes is move()'s; break speed drops fivefold in the air
+            puppet.setOnGround(move.isOnGround());
+        } else if (packet instanceof ServerboundPlayerActionPacket action) {
+            dig(action, time);
+        } else if (packet instanceof ServerboundUseItemOnPacket use) {
+            place(use);
+        } else if (packet instanceof ServerboundSwingPacket swing) {
+            puppet.swing(swing.getHand());
+        } else if (packet instanceof ServerboundAttackPacket) {
+            player.resetAttackStrengthTicker(); // the first person hand dips with the cooldown
+        } else if (packet instanceof ServerboundSetCarriedItemPacket carried) {
+            // the inventory is shared, so the hotbar and the first person hand follow
+            puppet.getInventory().setSelectedSlot(carried.getSlot());
+        } else if (packet instanceof ServerboundContainerClosePacket) {
+            // the server never echoes a close: the client shuts its own window and only tells the server
+            if (mc.screen instanceof AbstractContainerScreen<?>) player.clientSideCloseContainer();
+        } else if (packet instanceof ServerboundContainerClickPacket click) {
+            // like MultiPlayerGameMode.handleContainerInput: the server never echoes a click it agrees with, the
+            // client has already moved the stacks; a refusal resends the whole window
+            AbstractContainerMenu container = player.containerMenu;
+            if (container.containerId == click.containerId()) {
+                container.clicked(click.slotNum(), click.buttonNum(), click.containerInput(), player);
+            }
+        } else if (packet instanceof ServerboundPlayerInputPacket input) {
+            puppet.setShiftKeyDown(input.input().shift());
+        } else if (packet instanceof ServerboundPlayerCommandPacket command) {
+            switch (command.getAction()) {
+                case START_SPRINTING -> puppet.setSprinting(true);
+                case STOP_SPRINTING -> puppet.setSprinting(false);
+                default -> {
+                }
+            }
         }
     }
 
@@ -393,12 +507,10 @@ public final class Replay {
             m = new Move(0, a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.z + (b.z - a.z) * f,
                     (float) (a.yaw + (b.yaw - a.yaw) * f), (float) (a.pitch + (b.pitch - a.pitch) * f), false);
         }
-        for (int i = from; i < to; i++) {
-            // a teleport or a ride: there in no time at all, as the recorder's client set it down
-            if (moves.get(i).snap) puppet.setLocationAndAngles(m.x, m.y, m.z, m.yaw, m.pitch);
-        }
-        // reached within this tick; on a mount, the mount puts it back where it sits
-        puppet.setPositionAndRotation2(m.x, m.y, m.z, m.yaw, m.pitch, 1, false);
+        boolean snap = false;
+        // a teleport or a ride: there in no time at all, as the recorder's client set it down
+        for (int i = from; i < to; i++) snap |= moves.get(i).snap;
+        puppet.target(m.x, m.y, m.z, m.yaw, m.pitch, snap);
     }
 
     // how many moves were sent by then
@@ -412,36 +524,41 @@ public final class Replay {
         return lo;
     }
 
-    // every move packet, with what it leaves out carried forward: a standing player sends position once a second
+    // every move packet, with what it leaves out carried forward: a standing player sends position once a second.
+    // Only packets that need no registries are read, so this runs before any configuration has been replayed
     private static List<Move> moves(List<RecordingFile.Entry> entries) {
+        ProtocolInfo<?> clientbound = Protocols.clientboundPlay(RegistryAccess.EMPTY);
+        ProtocolInfo<?> serverbound = Protocols.serverboundPlay(RegistryAccess.EMPTY);
         List<Move> moves = new ArrayList<>();
         Move last = null;
         boolean snap = true;
         int self = Integer.MIN_VALUE;
         for (RecordingFile.Entry entry : entries) {
-            if (entry.direction == RecordingFile.INPUT) continue;
-            int id = entry.data[0];
+            if (entry.direction == RecordingFile.INPUT || entry.isConfiguration()) continue;
+            int id = Protocols.packetId(entry.data);
             try {
-                if (entry.direction != RecordingFile.SERVERBOUND) {
-                    if (id == 0x01) {
-                        self = ((S01PacketJoinGame) decode(entry)).getEntityId();
-                    } else if (id == 0x08) {
-                        // ponytail: relative flags ignored; 1.8 servers teleport absolutely
-                        S08PacketPlayerPosLook pos = (S08PacketPlayerPosLook) decode(entry);
-                        last = new Move(entry.time, pos.getX(), pos.getY(), pos.getZ(), pos.getYaw(), pos.getPitch(), true);
+                if (!entry.isServerbound()) {
+                    if (id == LOGIN) {
+                        // the entity id leads the packet; the rest names dimension types, which need the registries
+                        FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.wrappedBuffer(entry.data));
+                        buf.readVarInt();
+                        self = buf.readInt();
+                    } else if (id == POSITION) {
+                        ClientboundPlayerPositionPacket pos = (ClientboundPlayerPositionPacket) Protocols.decode(clientbound, entry.data);
+                        PositionMoveRotation from = last != null
+                                ? new PositionMoveRotation(new Vec3(last.x, last.y, last.z), Vec3.ZERO, last.yaw, last.pitch)
+                                : new PositionMoveRotation(Vec3.ZERO, Vec3.ZERO, 0, 0);
+                        PositionMoveRotation to = PositionMoveRotation.calculateAbsolute(from, pos.change(), pos.relatives());
+                        last = new Move(entry.time, to.position().x, to.position().y, to.position().z, to.yRot(), to.xRot(), true);
                         snap = true;
-                    } else if (id == 0x1B) {
-                        S1BPacketEntityAttach attach = (S1BPacketEntityAttach) decode(entry);
-                        if (attach.getLeash() == 0 && attach.getEntityId() == self) snap = true;
+                    } else if (id == PASSENGERS) {
+                        ClientboundSetPassengersPacket passengers = (ClientboundSetPassengersPacket) Protocols.decode(clientbound, entry.data);
+                        for (int passenger : passengers.getPassengers()) if (passenger == self) snap = true;
                     }
-                } else if (id >= 0x03 && id <= 0x06 && last != null) {
-                    C03PacketPlayer move = (C03PacketPlayer) decode(entry);
-                    last = new Move(entry.time,
-                            move.isMoving() ? move.getPositionX() : last.x,
-                            move.isMoving() ? move.getPositionY() : last.y,
-                            move.isMoving() ? move.getPositionZ() : last.z,
-                            move.getRotating() ? move.getYaw() : last.yaw,
-                            move.getRotating() ? move.getPitch() : last.pitch, snap);
+                } else if (MOVES.contains(id) && last != null) {
+                    ServerboundMovePlayerPacket move = (ServerboundMovePlayerPacket) Protocols.decode(serverbound, entry.data);
+                    last = new Move(entry.time, move.getX(last.x), move.getY(last.y), move.getZ(last.z),
+                            move.getYRot(last.yaw), move.getXRot(last.pitch), snap);
                     moves.add(last);
                     snap = false;
                 }
@@ -452,187 +569,183 @@ public final class Replay {
         return moves;
     }
 
-    private static final class Move {
-
-        final long time;
-        final double x, y, z;
-        final float yaw, pitch;
-        final boolean snap; // a teleport or a ride came before it: jump to it, do not glide
-
-        Move(long time, double x, double y, double z, float yaw, float pitch, boolean snap) {
-            this.time = time;
-            this.x = x;
-            this.y = y;
-            this.z = z;
-            this.yaw = yaw;
-            this.pitch = pitch;
-            this.snap = snap;
-        }
+    private record Move(long time, double x, double y, double z, float yaw, float pitch,
+                        boolean snap /* a teleport or a ride came before it: jump to it, do not glide */) {
     }
 
     // offline mode servers list the player with no skin; the header has it. A skin the server did send stays,
     // since that is what everyone saw, nick plugins included
-    private void ownSkin(S38PacketPlayerListItem packet) {
-        if (packet.getAction() != S38PacketPlayerListItem.Action.ADD_PLAYER || profile.getProperties().isEmpty()) return;
-        List<S38PacketPlayerListItem.AddPlayerData> players = ((AccessorS38PacketPlayerListItem) packet).getPlayers();
-        for (int i = 0; i < players.size(); i++) {
-            S38PacketPlayerListItem.AddPlayerData data = players.get(i);
-            if (data.getProfile().getId().equals(profile.getId()) && !data.getProfile().getProperties().containsKey("textures")) {
-                players.set(i, packet.new AddPlayerData(profile, data.getPing(), data.getGameMode(), data.getDisplayName()));
+    private void ownSkin(ClientboundPlayerInfoUpdatePacket packet) {
+        if (!packet.actions().contains(ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER) || profile.properties().isEmpty()) return;
+        List<ClientboundPlayerInfoUpdatePacket.Entry> entries = new ArrayList<>(packet.entries());
+        boolean changed = false;
+        for (int i = 0; i < entries.size(); i++) {
+            ClientboundPlayerInfoUpdatePacket.Entry e = entries.get(i);
+            if (e.profileId().equals(profile.id()) && e.profile() != null && !e.profile().properties().containsKey("textures")) {
+                entries.set(i, new ClientboundPlayerInfoUpdatePacket.Entry(e.profileId(), new GameProfile(e.profileId(), e.profile().name(), profile.properties()),
+                        e.listed(), e.latency(), e.gameMode(), e.displayName(), e.showHat(), e.listOrder(), e.chatSession()));
+                changed = true;
             }
         }
+        if (changed) ((AccessorPlayerInfoUpdatePacket) packet).setEntries(entries);
     }
 
     // NPCs are listed only long enough to spawn: a player looks up its skin on first render, which a seek or
     // the snapshot never gets to before the removal, so make it look now while the entry is still there
-    private void keepSkins(S38PacketPlayerListItem packet) {
-        if (packet.getAction() != S38PacketPlayerListItem.Action.REMOVE_PLAYER || mc.theWorld == null) return;
-        for (S38PacketPlayerListItem.AddPlayerData data : packet.getEntries()) {
-            EntityPlayer player = mc.theWorld.getPlayerEntityByUUID(data.getProfile().getId());
-            if (player instanceof AbstractClientPlayer) ((AbstractClientPlayer) player).getLocationSkin();
+    private void keepSkins(ClientboundPlayerInfoRemovePacket packet) {
+        if (mc.level == null) return;
+        for (UUID id : packet.profileIds()) {
+            if (mc.level.getPlayerByUUID(id) instanceof RemotePlayer player) player.getSkin();
         }
     }
 
     // the digger's client draws its own cracks and break effect; replay them for the puppet
-    private void dig(C07PacketPlayerDigging dig, long time) throws Exception {
-        BlockPos pos = dig.getPosition();
-        switch (dig.getStatus()) {
-            case START_DESTROY_BLOCK:
+    private void dig(ServerboundPlayerActionPacket dig, long time) throws IOException {
+        BlockPos pos = dig.getPos();
+        switch (dig.getAction()) {
+            case START_DESTROY_BLOCK -> {
                 RecordingFile.Entry end = digEnd(pos);
                 if (end == null) {
                     destroy(pos); // creative or instant mining: the client sends no STOP and breaks it on the spot
-                    break;
+                    return;
                 }
                 digPos = pos;
                 digStart = time;
-                if (((C07PacketPlayerDigging) decode(end)).getStatus() == C07PacketPlayerDigging.Action.STOP_DESTROY_BLOCK) {
+                if (((ServerboundPlayerActionPacket) decodeServerbound(end)).getAction() == ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK) {
                     digDuration = Math.max(1, end.time - time);
                 } else {
                     // ponytail: no haste or fatigue on the puppet; aborted digs under potions crack at the wrong pace
-                    float perTick = mc.theWorld.getBlockState(pos).getBlock().getPlayerRelativeBlockHardness(puppet, mc.theWorld, pos);
-                    digDuration = perTick <= 0 ? Long.MAX_VALUE : (long) Math.ceil(1 / perTick) * 50;
+                    float perTick = mc.level.getBlockState(pos).getDestroyProgress(puppet, mc.level, pos);
+                    digDuration = perTick <= 0 ? Long.MAX_VALUE : Math.max(1, (long) Math.ceil(1 / perTick) * 50);
                 }
-                break;
-            case STOP_DESTROY_BLOCK:
-                destroy(pos);
-                // fall through
-            case ABORT_DESTROY_BLOCK:
-                mc.theWorld.sendBlockBreakProgress(PUPPET_ID, pos, -1);
+            }
+            case STOP_DESTROY_BLOCK, ABORT_DESTROY_BLOCK -> {
+                if (dig.getAction() == ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK) destroy(pos);
+                mc.level.destroyBlockProgress(PUPPET_ID, pos, -1);
                 digPos = null;
-                break;
-            default:
-                break;
+            }
+            default -> {
+            }
         }
     }
 
-    // like PlayerControllerMP.onPlayerRightClick: the client places at once, the server's block change undoes a refusal
-    private void place(C08PacketPlayerBlockPlacement place) {
-        if (place.getPlacedBlockDirection() == 255) return; // a right click in the air, nothing placed
-        BlockPos pos = place.getPosition();
-        EnumFacing side = EnumFacing.getFront(place.getPlacedBlockDirection());
-        float x = place.getPlacedBlockOffsetX(), y = place.getPlacedBlockOffsetY(), z = place.getPlacedBlockOffsetZ();
-        ItemStack held = puppet.inventory.getCurrentItem();
-        if (held != null && held.getItem().onItemUseFirst(held, puppet, mc.theWorld, pos, side, x, y, z)) return;
-
-        IBlockState state = mc.theWorld.getBlockState(pos);
-        if ((!puppet.isSneaking() || held == null || held.getItem().doesSneakBypassUse(mc.theWorld, pos, puppet))
-                && state.getBlock().onBlockActivated(mc.theWorld, pos, state, puppet, side, x, y, z)) return;
-        if (held == null) return;
-
+    // like MultiPlayerGameMode.performUseItemOn: the client places at once, the server's block change undoes a refusal
+    private void place(ServerboundUseItemOnPacket use) {
+        InteractionHand hand = use.getHand();
+        BlockHitResult hit = use.getHitResult();
+        ClientLevel level = mc.level;
         // the stack is the viewer's own; the server only resends it when its count disagrees with the client's
-        int meta = held.getMetadata();
-        int size = held.stackSize;
-        if (held.onItemUse(puppet, mc.theWorld, pos, side, x, y, z)) mc.getItemRenderer().resetEquippedProgress(); // the hand dips
-        if (puppet.capabilities.isCreativeMode) {
-            held.setItemDamage(meta);
-            held.stackSize = size;
-        } else if (held.stackSize <= 0) {
-            puppet.inventory.mainInventory[puppet.inventory.currentItem] = null;
+        ItemStack held = puppet.getItemInHand(hand);
+        boolean hasItem = !puppet.getMainHandItem().isEmpty() || !puppet.getOffhandItem().isEmpty();
+        if (!(puppet.isSecondaryUseActive() && hasItem)) {
+            BlockState state = level.getBlockState(hit.getBlockPos());
+            InteractionResult result = state.useItemOn(held, level, puppet, hand, hit);
+            if (result.consumesAction()) return;
+            if (result instanceof InteractionResult.TryEmptyHandInteraction && hand == InteractionHand.MAIN_HAND
+                    && state.useWithoutItem(level, puppet, hit).consumesAction()) return;
         }
+        if (held.isEmpty() || puppet.getCooldowns().isOnCooldown(held)) return;
+        int count = held.getCount();
+        InteractionResult result = held.useOn(new UseOnContext(puppet, hand, hit));
+        if (puppet.hasInfiniteMaterials()) held.setCount(count);
+        if (result.consumesAction()) mc.getEntityRenderDispatcher().getItemInHandRenderer().itemUsed(hand); // the hand dips
     }
 
-    // like PlayerControllerMP.onPlayerDestroyBlock: gone at once, the server's block change undoes a refusal
+    // like MultiPlayerGameMode.destroyBlock: gone at once, the server's block change undoes a refusal
     private void destroy(BlockPos pos) {
-        IBlockState state = mc.theWorld.getBlockState(pos);
+        ClientLevel level = mc.level;
+        BlockState state = level.getBlockState(pos);
         Block block = state.getBlock();
-        if (block.getMaterial() == Material.air) return;
-        mc.theWorld.playAuxSFX(2001, pos, Block.getStateId(state));
-        if (block.removedByPlayer(mc.theWorld, pos, puppet, false)) {
-            block.onBlockDestroyedByPlayer(mc.theWorld, pos, state);
-        }
+        if (state.isAir() || block instanceof GameMasterBlock && !puppet.canUseGameMasterBlocks()) return;
+        if (!puppet.getMainHandItem().canDestroyBlock(state, level, pos, puppet)) return;
+        block.playerWillDestroy(level, pos, state, puppet); // the break particles and sound
+        FluidState fluid = level.getFluidState(pos);
+        if (level.setBlock(pos, fluid.createLegacyBlock(), Block.UPDATE_ALL_IMMEDIATE)) block.destroy(level, pos, state);
     }
 
     // a dig in progress always ends in a STOP or ABORT for its own block; anything else means it broke instantly
-    private RecordingFile.Entry digEnd(BlockPos pos) throws Exception {
+    private RecordingFile.Entry digEnd(BlockPos pos) throws IOException {
         for (int i = index; i < entries.size(); i++) {
             RecordingFile.Entry e = entries.get(i);
-            if (e.direction != RecordingFile.SERVERBOUND || e.data[0] != 0x07) continue;
-            C07PacketPlayerDigging next = (C07PacketPlayerDigging) decode(e);
-            C07PacketPlayerDigging.Action action = next.getStatus();
-            if (action == C07PacketPlayerDigging.Action.START_DESTROY_BLOCK) return null;
-            if (action == C07PacketPlayerDigging.Action.ABORT_DESTROY_BLOCK
-                    || action == C07PacketPlayerDigging.Action.STOP_DESTROY_BLOCK) {
-                return next.getPosition().equals(pos) ? e : null;
+            if (e.direction != RecordingFile.SERVERBOUND || Protocols.packetId(e.data) != PLAYER_ACTION) continue;
+            ServerboundPlayerActionPacket next = (ServerboundPlayerActionPacket) decodeServerbound(e);
+            ServerboundPlayerActionPacket.Action action = next.getAction();
+            if (action == ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK) return null;
+            if (action == ServerboundPlayerActionPacket.Action.ABORT_DESTROY_BLOCK
+                    || action == ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK) {
+                return next.getPos().equals(pos) ? e : null;
             }
         }
         return null;
     }
 
-    private static Packet decode(RecordingFile.Entry entry) throws Exception {
-        PacketBuffer buf = new PacketBuffer(Unpooled.wrappedBuffer(entry.data));
-        try {
-            Packet packet = EnumConnectionState.PLAY.getPacket(entry.direction == RecordingFile.SERVERBOUND
-                    ? EnumPacketDirection.SERVERBOUND : EnumPacketDirection.CLIENTBOUND, buf.readVarIntFromBuffer());
-            packet.readPacketData(buf);
-            return packet;
-        } finally {
-            buf.release();
-        }
+    private Packet<?> decodeServerbound(RecordingFile.Entry entry) throws IOException {
+        return Protocols.decode(Protocols.serverboundPlay(mc.getConnection().registryAccess()), entry.data);
     }
 
     // the server leaves a player's own sounds to their client, so the recording never has their footsteps;
     // this plays them the way the recorder's client did
-    public static final class Puppet extends EntityOtherPlayerMP {
+    public static final class Puppet extends RemotePlayer {
 
+        private double targetX, targetY, targetZ;
+        private float targetYaw, targetPitch;
+        private boolean hasTarget;
+        private float walked;
         private int nextStep;
-        public float armPitch, prevArmPitch, armYaw, prevArmYaw; // like EntityPlayerSP's, for the first person hand's sway
 
-        Puppet(World world, GameProfile profile) {
-            super(world, profile);
+        Puppet(ClientLevel level, GameProfile profile) {
+            super(level, profile);
         }
 
-        // EntityPlayer's goes to everyone near but this player, which a client never sends anywhere
+        // reached within the next tick, as the recorder's own client moved; a snap is there already
+        void target(double x, double y, double z, float yaw, float pitch, boolean snap) {
+            targetX = x;
+            targetY = y;
+            targetZ = z;
+            targetYaw = yaw;
+            targetPitch = pitch;
+            hasTarget = true;
+            if (snap && !isPassenger()) snapTo(x, y, z, yaw, pitch);
+        }
+
+        // Player's goes to everyone near but this player, which a client never sends anywhere
         @Override
-        public void playSound(String name, float volume, float pitch) {
-            if (!isSilent()) worldObj.playSound(posX, posY, posZ, name, volume, pitch, false);
+        public void playSound(SoundEvent sound, float volume, float pitch) {
+            if (!isSilent()) level().playLocalSound(getX(), getY(), getZ(), sound, getSoundSource(), volume, pitch, false);
         }
 
         // what the recorded player's own screen was drawn for
-        public WorldSettings.GameType getGameType() {
-            NetworkPlayerInfo info = getPlayerInfo();
-            return info != null ? info.getGameType() : WorldSettings.GameType.SURVIVAL;
+        public GameType getGameType() {
+            GameType mode = gameMode();
+            return mode != null ? mode : GameType.SURVIVAL;
         }
 
-        // like Entity.moveEntity, which the puppet's glide never calls
-        // ponytail: no swim splashes, no fence-top steps; add from moveEntity if missed
+        // ponytail: no swim splashes, no amethyst chimes; add from Entity.move if missed
         @Override
-        public void onLivingUpdate() {
-            double x = posX, y = posY, z = posZ;
-            super.onLivingUpdate();
-            rotationYawHead = rotationYaw; // a player's head is where they look
-            prevArmPitch = armPitch;
-            prevArmYaw = armYaw;
-            armPitch += (rotationPitch - armPitch) * 0.5F;
-            armYaw += (rotationYaw - armYaw) * 0.5F;
-            if (ridingEntity != null || onGround && isSneaking()) return;
-            BlockPos pos = new BlockPos(MathHelper.floor_double(posX), MathHelper.floor_double(posY - 0.2), MathHelper.floor_double(posZ));
-            Block block = worldObj.getBlockState(pos).getBlock();
-            double dy = block == Blocks.ladder ? posY - y : 0;
-            distanceWalkedOnStepModified += MathHelper.sqrt_double((posX - x) * (posX - x) + dy * dy + (posZ - z) * (posZ - z)) * 0.6;
-            if (distanceWalkedOnStepModified > nextStep && block.getMaterial() != Material.air) {
-                nextStep = (int) distanceWalkedOnStepModified + 1;
-                playStepSound(pos, block);
+        public void aiStep() {
+            double x = getX(), y = getY(), z = getZ();
+            super.aiStep();
+            if (!hasTarget) return;
+            // on a mount, the mount puts it back where it sits
+            if (!isPassenger()) setPos(targetX, targetY, targetZ);
+            setYRot(targetYaw);
+            setXRot(targetPitch);
+            setYHeadRot(targetYaw); // a player's head is where they look
+            if (isPassenger() || onGround() && isShiftKeyDown()) return;
+            BlockPos pos = BlockPos.containing(getX(), getY() - 0.2, getZ());
+            BlockState state = level().getBlockState(pos);
+            double dy = state.is(BlockTags.CLIMBABLE) ? getY() - y : 0;
+            walked += (float) (Mth.length(getX() - x, dy, getZ() - z) * 0.6);
+            if (walked > nextStep && !state.isAir()) {
+                nextStep = (int) walked + 1;
+                playStepSound(pos, state);
             }
+        }
+
+        // the puppet is no one's to push or be pushed
+        @Override
+        public boolean isPushable() {
+            return false;
         }
     }
 }

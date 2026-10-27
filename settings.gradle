@@ -1,16 +1,12 @@
 pluginManagement {
     repositories {
-        gradlePluginPortal()
-        maven { url = 'https://repo.essential.gg/repository/maven-public' }
-        maven { url = 'https://maven.architectury.dev' }
-        maven { url = 'https://maven.minecraftforge.net' }
-        maven { url = 'https://maven.fabricmc.net/' }
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+        }
         mavenCentral()
+        gradlePluginPortal()
     }
-}
-
-plugins {
-    id 'org.gradle.toolchains.foojay-resolver-convention' version '0.8.0'
 }
 
 rootProject.name = 'recorder'

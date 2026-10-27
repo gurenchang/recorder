@@ -1,7 +1,10 @@
 package net.toshimichi.recorder;
 
+import com.google.common.collect.LinkedHashMultimap;
+import com.google.common.collect.Multimap;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.Property;
+import com.mojang.authlib.properties.PropertyMap;
 
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
@@ -18,8 +21,10 @@ import java.util.UUID;
  * On-disk layout, all big-endian:
  * <pre>
  * int   magic "MCRC"
- * int   version (2)
+ * int   version (3)
  * long  recording start, epoch millis
+ * int   network protocol version                         (version 3 and up)
+ * UTF   game version name, e.g. "26.1.2"                  (version 3 and up)
  * long  recording player's UUID, most significant bits   (version 2 and up)
  * long  recording player's UUID, least significant bits
  * UTF   recording player's name
@@ -27,20 +32,25 @@ import java.util.UUID;
  * then until EOF:
  *   int   time since start, millis
  *   byte  direction: 0 clientbound, 1 serverbound, 2 synthetic clientbound (world snapshot taken at start),
- *                    3 input event
+ *                    3 input event, 4 clientbound configuration, 5 serverbound configuration,
+ *                    6 synthetic clientbound configuration (registry snapshot taken at start)
  *   int   length
  *   bytes packet exactly as it crossed the wire after decryption and decompression: varint id + payload;
- *         for an input event: byte device (0 keyboard, 1 mouse), int LWJGL key or button code, byte pressed
+ *         for an input event: byte device (0 keyboard, 1 mouse), int GLFW key or button code, byte pressed
  * </pre>
  */
 public final class RecordingFile {
 
     public static final int MAGIC = 0x4D435243;
-    public static final int VERSION = 2;
+    public static final int VERSION = 3;
+    public static final int LEGACY_PROTOCOL = 47; // versions 1 and 2 were all written by the 1.8.9 mod
     public static final byte CLIENTBOUND = 0;
     public static final byte SERVERBOUND = 1;
     public static final byte SNAPSHOT = 2;
     public static final byte INPUT = 3;
+    public static final byte CONFIGURATION_CLIENTBOUND = 4;
+    public static final byte CONFIGURATION_SERVERBOUND = 5;
+    public static final byte CONFIGURATION_SNAPSHOT = 6;
     public static final byte KEYBOARD = 0;
     public static final byte MOUSE = 1;
 
@@ -55,14 +65,26 @@ public final class RecordingFile {
             this.direction = direction;
             this.data = data;
         }
+
+        public boolean isConfiguration() {
+            return direction == CONFIGURATION_CLIENTBOUND || direction == CONFIGURATION_SERVERBOUND || direction == CONFIGURATION_SNAPSHOT;
+        }
+
+        public boolean isServerbound() {
+            return direction == SERVERBOUND || direction == CONFIGURATION_SERVERBOUND;
+        }
     }
 
     public static final class Contents {
 
+        public final int protocol;
+        public final String gameVersion; // "1.8.9" before version 3
         public final GameProfile profile; // null for a version 1 file
         public final List<Entry> entries;
 
-        public Contents(GameProfile profile, List<Entry> entries) {
+        public Contents(int protocol, String gameVersion, GameProfile profile, List<Entry> entries) {
+            this.protocol = protocol;
+            this.gameVersion = gameVersion;
             this.profile = profile;
             this.entries = entries;
         }
@@ -71,20 +93,22 @@ public final class RecordingFile {
     private RecordingFile() {
     }
 
-    public static void writeHeader(DataOutput out, long startMillis, GameProfile profile) throws IOException {
+    public static void writeHeader(DataOutput out, long startMillis, int protocol, String gameVersion, GameProfile profile) throws IOException {
         out.writeInt(MAGIC);
         out.writeInt(VERSION);
         out.writeLong(startMillis);
-        out.writeLong(profile.getId().getMostSignificantBits());
-        out.writeLong(profile.getId().getLeastSignificantBits());
-        out.writeUTF(profile.getName());
+        out.writeInt(protocol);
+        out.writeUTF(gameVersion);
+        out.writeLong(profile.id().getMostSignificantBits());
+        out.writeLong(profile.id().getLeastSignificantBits());
+        out.writeUTF(profile.name());
         // the textures property is the skin and cape, signed by Mojang
-        out.writeInt(profile.getProperties().size());
-        for (Property property : profile.getProperties().values()) {
-            out.writeUTF(property.getName());
-            out.writeUTF(property.getValue());
+        out.writeInt(profile.properties().size());
+        for (Property property : profile.properties().values()) {
+            out.writeUTF(property.name());
+            out.writeUTF(property.value());
             out.writeBoolean(property.hasSignature());
-            if (property.hasSignature()) out.writeUTF(property.getSignature());
+            if (property.hasSignature()) out.writeUTF(property.signature());
         }
     }
 
@@ -101,11 +125,19 @@ public final class RecordingFile {
             if (in.readInt() != MAGIC) throw new IOException("Not a recording: " + file.getName());
             int version = in.readInt();
             in.readLong();
-            GameProfile profile = version >= 2 ? new GameProfile(new UUID(in.readLong(), in.readLong()), in.readUTF()) : null;
-            for (int i = version >= 2 ? in.readInt() : 0; i > 0; i--) {
+            int protocol = version >= 3 ? in.readInt() : LEGACY_PROTOCOL;
+            String gameVersion = version >= 3 ? in.readUTF() : "1.8.9";
+            GameProfile profile = null;
+            if (version >= 2) {
+                UUID id = new UUID(in.readLong(), in.readLong());
                 String name = in.readUTF();
-                String value = in.readUTF();
-                profile.getProperties().put(name, new Property(name, value, in.readBoolean() ? in.readUTF() : null));
+                Multimap<String, Property> properties = LinkedHashMultimap.create();
+                for (int i = in.readInt(); i > 0; i--) {
+                    String key = in.readUTF();
+                    String value = in.readUTF();
+                    properties.put(key, new Property(key, value, in.readBoolean() ? in.readUTF() : null));
+                }
+                profile = new GameProfile(id, name, new PropertyMap(properties));
             }
 
             List<Entry> entries = new ArrayList<>();
@@ -119,7 +151,7 @@ public final class RecordingFile {
                 }
             } catch (EOFException e) {
                 // a crash mid-write leaves a partial tail; everything before it is still good
-                return new Contents(profile, entries);
+                return new Contents(protocol, gameVersion, profile, entries);
             }
         }
     }
