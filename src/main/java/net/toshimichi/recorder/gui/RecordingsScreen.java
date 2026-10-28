@@ -10,6 +10,7 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
+import net.toshimichi.recorder.JsonlExport;
 import net.toshimichi.recorder.Recording;
 import net.toshimichi.recorder.Replay;
 import org.slf4j.Logger;
@@ -30,7 +31,12 @@ public class RecordingsScreen extends Screen {
     private Button replayButton;
     private Button deleteButton;
     private Button convertButton;
+    private Button exportButton;
     private Component status = Component.empty();
+    // an export outlives the screen it was started from; reopening shows how it is going
+    private static volatile boolean exporting;
+    private static volatile Component exportStatus;
+    private Component shownExport;
 
     public RecordingsScreen(Screen parent) {
         super(Component.literal("Recordings"));
@@ -46,8 +52,10 @@ public class RecordingsScreen extends Screen {
                 .bounds(width / 2 - 50, height - 52, 100, 20).build());
         deleteButton = addRenderableWidget(Button.builder(Component.literal("Delete"), button -> delete())
                 .bounds(width / 2 + 54, height - 52, 100, 20).build());
+        exportButton = addRenderableWidget(Button.builder(Component.literal("Export JSONL"), button -> export())
+                .bounds(width / 2 - 154, height - 28, 100, 20).build());
         addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, button -> onClose())
-                .bounds(width / 2 - 100, height - 28, 200, 20).build());
+                .bounds(width / 2 - 50, height - 28, 204, 20).build());
         updateButtons();
     }
 
@@ -64,13 +72,41 @@ public class RecordingsScreen extends Screen {
         return entry != null ? entry.file : null;
     }
 
+    // an export rebuilds the recording's registries, as a replay does: one at a time
     private void updateButtons() {
-        replayButton.active = convertButton.active = deleteButton.active = selected() != null;
+        replayButton.active = convertButton.active = deleteButton.active = exportButton.active = selected() != null && !exporting;
     }
 
     @Override
     public void tick() {
         updateButtons();
+        // only when it changes, so the other buttons' messages are not overwritten by an old export's
+        Component progress = exportStatus;
+        if (progress != null && progress != shownExport) status = shownExport = progress;
+    }
+
+    // recordings/<name>.jsonl, decoded on a worker thread: a long recording takes seconds
+    private void export() {
+        File file = selected();
+        if (file == null || exporting) return;
+        File jsonl = JsonlExport.jsonlFor(file);
+        exporting = true;
+        exportStatus = Component.literal("Exporting " + file.getName() + "...");
+        Thread thread = new Thread(() -> {
+            try {
+                JsonlExport.Result result = JsonlExport.export(file, jsonl,
+                        lines -> exportStatus = Component.literal("Exporting " + file.getName() + ": " + lines + " rows"));
+                exportStatus = Component.literal("Exported " + jsonl.getName() + ": " + result.lines() + " rows, " + result.errors() + " errors")
+                        .withStyle(result.errors() == 0 ? ChatFormatting.GRAY : ChatFormatting.YELLOW);
+            } catch (IOException | RuntimeException e) {
+                log.error("Failed to export {}", file, e);
+                exportStatus = Component.literal(String.valueOf(e.getMessage())).withStyle(ChatFormatting.RED);
+            } finally {
+                exporting = false;
+            }
+        }, "Recorder JSONL export");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     private void delete() {

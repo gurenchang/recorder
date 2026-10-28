@@ -12,6 +12,7 @@ This is a port of [Toshimichi0915/recorder](https://github.com/Toshimichi0915/re
 - **Mark:** while recording, press **F7** (Add Marker) to mark the moment, or type `/recmark <text>` to mark it with a label. The action bar shows the marker's number and time; replays show it again when they pass it. The key can be changed under **Recorder** in Controls.
 - **Replay:** on the title screen, press **R** (left of Multiplayer), pick a recording and press **Replay**. You watch as a spectator; left-click an entity to see through its eyes, sneak to let go. The pause menu then has Pause/Resume, a seek slider and a game mode switch, and Disconnect leaves the replay.
 - **Convert to World:** in the same screen, saves every chunk the recording loaded into a new single player world (creative, with void everywhere else).
+- **Export JSONL:** in the same screen, writes every row of the recording as one JSON object per line to `recordings/<name>.jsonl`, decoded by the game's own codecs. Without starting the game: `./gradlew exportRecording -Pmcrc=<path/to/recording.mcrc>`.
 
 Recordings made by the 1.8.9 version cannot be replayed by this one: the packets are a different protocol.
 

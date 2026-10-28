@@ -18,6 +18,19 @@ test {
     useJUnitPlatform()
 }
 
+// ./gradlew exportRecording -Pmcrc=<path/to/recording.mcrc> writes <recording>.jsonl next to it, without starting the game
+tasks.register('exportRecording', JavaExec) {
+    group = 'recorder'
+    description = 'Decodes every row of -Pmcrc=<recording.mcrc> into <recording>.jsonl next to it'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'net.toshimichi.recorder.JsonlExport'
+    args = [providers.gradleProperty('mcrc').getOrElse('')]
+    // the game's logs/ go where runClient's do, not into the project
+    def runDir = file('run')
+    workingDir = runDir
+    doFirst { runDir.mkdirs() }
+}
+
 processResources {
     def version = project.version
     inputs.property 'version', version

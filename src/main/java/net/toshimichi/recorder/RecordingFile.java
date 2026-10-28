@@ -91,12 +91,16 @@ public final class RecordingFile {
 
     public static final class Contents {
 
+        public final int version;
+        public final long start; // epoch millis
         public final int protocol;
         public final String gameVersion; // "1.8.9" before version 3
         public final GameProfile profile; // null for a version 1 file
         public final List<Entry> entries;
 
-        public Contents(int protocol, String gameVersion, GameProfile profile, List<Entry> entries) {
+        public Contents(int version, long start, int protocol, String gameVersion, GameProfile profile, List<Entry> entries) {
+            this.version = version;
+            this.start = start;
             this.protocol = protocol;
             this.gameVersion = gameVersion;
             this.profile = profile;
@@ -159,7 +163,7 @@ public final class RecordingFile {
         try (DataInputStream in = new DataInputStream(new BufferedInputStream(new FileInputStream(file)))) {
             if (in.readInt() != MAGIC) throw new IOException("Not a recording: " + file.getName());
             int version = in.readInt();
-            in.readLong();
+            long start = in.readLong();
             int protocol = version >= 3 ? in.readInt() : LEGACY_PROTOCOL;
             String gameVersion = version >= 3 ? in.readUTF() : "1.8.9";
             GameProfile profile = null;
@@ -186,7 +190,7 @@ public final class RecordingFile {
                 }
             } catch (EOFException e) {
                 // a crash mid-write leaves a partial tail; everything before it is still good
-                return new Contents(protocol, gameVersion, profile, entries);
+                return new Contents(version, start, protocol, gameVersion, profile, entries);
             }
         }
     }

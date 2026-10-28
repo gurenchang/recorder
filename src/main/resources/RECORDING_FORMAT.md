@@ -150,6 +150,63 @@ string  label     uint16 byte count, then that many bytes of Java modified UTF-8
 Markers are numbered from 1 in file order; the recorder shows that number when one is made
 ("Marker #3 at 1:23.450") and the replay shows it again when playback passes it.
 
+## JSONL export
+
+Rather than decoding packets by hand, a recording can be turned into one JSON object per
+line, decoded by the game's own codecs: the **Export JSONL** button in the Recordings
+screen, or without starting the game:
+
+```sh
+./gradlew exportRecording -Pmcrc="C:/.../recordings/2026-10-28_12-00-00.mcrc"
+```
+
+Either writes `<name>.jsonl` next to `<name>.mcrc`. The synced registries are rebuilt from the
+recording's configuration rows the way a joining client does, so packets that name items,
+entities or sounds decode. The first line is the header, then one line per row, in file order:
+
+```json
+{"header":{"version":3,"start":1761620000000,"protocol":775,"game":"26.1.2","player":"name","uuid":"..."}}
+{"t":1234,"dir":"s2c","id":93,"type":"minecraft:set_entity_data","p":{...}}
+{"t":1250,"dir":"c2s","id":29,"type":"minecraft:move_player_pos_rot","p":{...}}
+{"t":1300,"dir":"input","device":"key","code":87,"pressed":true}
+{"t":1400,"dir":"mark","source":"key","label":""}
+{"t":1500,"dir":"s2c","id":12,"error":"<exception>","hex":"<first 64 bytes>"}
+```
+
+- `dir`: `s2c` (0), `c2s` (1), `snap` (2), `input` (3), `cfg_s2c` (4), `cfg_c2s` (5),
+  `cfg_snap` (6), `mark` (7); an unknown direction is `"unknown:<n>"` with `hex`.
+- `id` is the packet id, `type` the packet type (`packet.type().id()`); bundle delimiters
+  are rows too.
+- A row that fails to decode becomes an error row with `error` and `hex`; the rest of the
+  file is still written. The number of rows and errors, and a count per packet type, go to
+  the log.
+
+`p` is the packet's own fields, by name (records by component, other classes by their
+instance fields, superclasses included), as the packet class holds them: a sound's `x` is the
+fixed-point value on the wire, eight times the block coordinate. Values convert as follows:
+
+| value | JSON |
+|---|---|
+| text component | `{"text": <plain text>, "json": <component JSON>}`; legacy `§` codes stay in `text` |
+| item stack | the item stack codec's JSON (`{}` for an empty one) |
+| holder, resource key, registered value (entity type, block, item, sound...) | its id, `"minecraft:zombie"`; a direct holder with no id is its contents |
+| tag key | `"#minecraft:logs"` |
+| block state | `"minecraft:stone_slab[type=top,waterlogged=false]"` |
+| entity metadata value | `{"i": <index>, "s": <serializer id>, "v": <value>}` |
+| `Vec3`, `BlockPos`, `SectionPos`, `ChunkPos` | an array of numbers |
+| UUID | a string |
+| enum | its `name()` |
+| `Optional` and the like | its contents, or `null` |
+| collection, array | an array; a map with string keys is an object, any other map an array of `[key, value]` |
+| `byte[]`, `long[]`, buffers, primitive arrays over 256 long | `{"bytes": <size>}` |
+| number | as is; NaN and infinities are `null` |
+| NBT | its JSON |
+| anything else | `toString()` |
+
+Chunk data (`level_chunk_with_light`, `light_update`, `chunks_biomes`) is only its position and
+size in bytes, `{"x":..,"z":..,"bytes":..}`. `section_blocks_update` lists every changed block
+as `{"pos":[x,y,z],"block":"..."}`.
+
 ## Minimal reader (Python)
 
 ```python
