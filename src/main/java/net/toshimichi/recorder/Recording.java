@@ -104,6 +104,7 @@ import net.toshimichi.recorder.mixin.InvokerTagNetworkSerialization;
 import org.slf4j.Logger;
 
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -118,6 +119,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /** Writes the live connection to disk. record() is called from the netty thread, the rest from the client thread. */
 public final class Recording {
@@ -126,14 +128,75 @@ public final class Recording {
     // ClientChunkCache's storage ring is wider than the view by 3, and the view is at most 32
     private static final int CHUNK_SEARCH_RADIUS = 40;
 
-    private static volatile DataOutputStream out;
+    // every open recording: the one started from the pause menu and the replay buffer's segments. record() runs on the
+    // netty thread and walks this list; sinks are opened and closed on the client thread
+    private static final List<Sink> sinks = new CopyOnWriteArrayList<>();
     // the connection being recorded: the codecs also run for server list pings and LAN guests in this JVM
     private static volatile Channel channel;
-    private static long start;
-    private static File file;
-    private static int markers; // numbered per recording, from 1
+    private static volatile Sink manual;
 
     private Recording() {
+    }
+
+    /** One .mcrc being written. Times count from its own start, so sinks opened at different moments each stay right. */
+    public static final class Sink {
+
+        private final File file;
+        private final long start;
+        private final DataOutputStream out;
+        // rows that arrive while the snapshot is still being written; they go after it
+        private ByteArrayOutputStream pending = new ByteArrayOutputStream();
+        private DataOutputStream pendingOut = new DataOutputStream(pending);
+        private int markers; // numbered per recording, from 1
+        private boolean closed;
+
+        private Sink(File file, long start) throws IOException {
+            this.file = file;
+            this.start = start;
+            this.out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(file)));
+        }
+
+        public File file() {
+            return file;
+        }
+
+        public long start() {
+            return start;
+        }
+
+        private synchronized void write(long now, byte direction, byte[] data) throws IOException {
+            if (closed) return;
+            RecordingFile.writeEntry(pendingOut != null ? pendingOut : out, (int) (now - start), direction, data);
+        }
+
+        private synchronized Mark mark(long now, byte source, String label) throws IOException {
+            if (closed) return null;
+            write(now, RecordingFile.MARKER, RecordingFile.marker(source, label));
+            return new Mark(++markers, now - start);
+        }
+
+        // the header and snapshot are in: what waited behind them follows, and from now on rows go straight to the file
+        private synchronized void begin() throws IOException {
+            pending.writeTo(out);
+            pending = null;
+            pendingOut = null;
+        }
+
+        // how much of the file is whole rows right now; a copy of that many bytes is a complete recording
+        public synchronized long flushedLength() throws IOException {
+            out.flush();
+            return out.size();
+        }
+
+        private synchronized void close() {
+            if (closed) return;
+            closed = true;
+            try {
+                out.close();
+            } catch (IOException e) {
+                log.error("Failed to close {}", file, e);
+            }
+        }
     }
 
     public static File directory() {
@@ -141,64 +204,83 @@ public final class Recording {
     }
 
     public static boolean isRecording() {
-        return out != null;
+        return manual != null;
     }
 
+    // the action bar, not the chat: the chat is part of what is being recorded
     public static void toggle(Minecraft mc) {
-        if (isRecording()) {
+        Sink sink = manual;
+        if (sink != null) {
             stop();
-            chat(mc, Component.literal("Recording saved as " + file.getName()));
+            mc.gui.setOverlayMessage(Component.literal("Recording saved as " + sink.file().getName()), false);
             return;
         }
 
         try {
             start(mc);
-            chat(mc, Component.literal("Recording to " + file.getName()));
+            mc.gui.setOverlayMessage(Component.literal("Recording to " + manual.file().getName()), false);
         } catch (IOException | RuntimeException e) {
             log.error("Failed to start recording", e);
-            chat(mc, Component.literal("Failed to start recording: " + e.getMessage()).withStyle(ChatFormatting.RED));
+            mc.gui.setOverlayMessage(Component.literal("Failed to start recording: " + e.getMessage()).withStyle(ChatFormatting.RED), false);
         }
     }
 
-    public static synchronized void start(Minecraft mc) throws IOException {
+    public static void start(Minecraft mc) throws IOException {
         directory().mkdirs();
-        file = new File(directory(), new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(new Date()) + ".mcrc");
-        start = System.currentTimeMillis();
-        markers = 0;
+        manual = open(mc, new File(directory(), new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(new Date()) + ".mcrc"), "Recording");
+    }
 
-        DataOutputStream stream = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(file)));
-        // listen first: whatever arrives from here on is applied after the snapshot, so it must be recorded;
-        // record() waits on this lock until the header and snapshot are written, which keeps them in front
+    public static void stop() {
+        Sink sink = manual;
+        if (sink != null) close(sink);
+    }
+
+    // a recording must not outlive its connection: every sink, the replay buffer's too
+    public static void stopAll() {
+        for (Sink sink : sinks) close(sink);
+    }
+
+    // a new recording of the current connection, header and snapshot written; the ones already open carry on meanwhile
+    public static Sink open(Minecraft mc, File file, String what) throws IOException {
+        long begin = System.nanoTime();
+        Sink sink = new Sink(file, System.currentTimeMillis());
+        // listen first: whatever arrives from here on is applied after the snapshot, so it must be recorded; until the
+        // header and snapshot are written it waits in the sink's memory, which keeps them in front without holding up
+        // the netty thread or the other sinks
         channel = ((AccessorConnection) mc.getConnection().getConnection()).getChannel();
-        out = stream;
+        sinks.add(sink);
         try {
             // and what arrived before is applied before it, or it is in neither
             mc.packetProcessor().processQueuedPackets();
+            // only this thread writes to the file until begin(), so the snapshot needs no lock
+            DataOutputStream out = sink.out;
             // getGameProfile() may block on Mojang's session server for a while
-            RecordingFile.writeHeader(stream, start, SharedConstants.getProtocolVersion(), SharedConstants.getCurrentVersion().name(), mc.getGameProfile());
+            RecordingFile.writeHeader(out, sink.start, SharedConstants.getProtocolVersion(), SharedConstants.getCurrentVersion().name(), mc.getGameProfile());
             RegistryAccess registries = mc.getConnection().registryAccess();
             // the registries and tags the server synced, so a replay can decode what follows
             for (Packet<?> packet : configurationSnapshot(mc)) {
-                RecordingFile.writeEntry(stream, 0, RecordingFile.CONFIGURATION_SNAPSHOT, Protocols.encode(Protocols.configuration(false), packet));
+                RecordingFile.writeEntry(out, 0, RecordingFile.CONFIGURATION_SNAPSHOT, Protocols.encode(Protocols.configuration(false), packet));
             }
             // the world state the server sent before we started listening, so a replay has something to show
+            int chunks = 0;
             for (Packet<?> packet : snapshot(mc)) {
-                RecordingFile.writeEntry(stream, 0, RecordingFile.SNAPSHOT, Protocols.encode(Protocols.clientboundPlay(registries), packet));
+                if (packet instanceof ClientboundLevelChunkWithLightPacket) chunks++;
+                RecordingFile.writeEntry(out, 0, RecordingFile.SNAPSHOT, Protocols.encode(Protocols.clientboundPlay(registries), packet));
             }
+            int bytes = out.size();
+            sink.begin();
+            log.info("{} snapshot: {} ms, {} chunks, {} bytes", what, (System.nanoTime() - begin) / 1_000_000, chunks, bytes);
+            return sink;
         } catch (IOException | RuntimeException e) {
-            stop();
+            close(sink);
             throw e;
         }
     }
 
-    public static synchronized void stop() {
-        if (out == null) return;
-        try {
-            out.close();
-        } catch (IOException e) {
-            log.error("Failed to close {}", file, e);
-        }
-        out = null;
+    public static void close(Sink sink) {
+        sinks.remove(sink);
+        if (manual == sink) manual = null;
+        sink.close();
     }
 
     // the states a replay understands, else -1; login and status never reach a recording
@@ -212,7 +294,7 @@ public final class Recording {
 
     // a frame off a real connection's codecs: varint id + payload, already decrypted and decompressed
     public static void record(Channel source, byte direction, ByteBuf buf) {
-        if (out == null || source != channel) return;
+        if (sinks.isEmpty() || source != channel) return;
 
         byte[] data = new byte[buf.readableBytes()];
         buf.getBytes(buf.readerIndex(), data);
@@ -221,7 +303,7 @@ public final class Recording {
 
     // singleplayer: the in-memory channel carries objects, so the frame is built the way the codec would have
     public static void record(Channel source, boolean serverbound, Packet<?> packet, ConnectionProtocol listening) {
-        if (out == null || source != channel) return;
+        if (sinks.isEmpty() || source != channel) return;
         try {
             if (packet instanceof BundlePacket<?>) {
                 // on a real connection a bundle crosses the wire as its parts between two delimiters
@@ -249,45 +331,48 @@ public final class Recording {
         }
     }
 
+    // one clock reading for every sink, so a row lands at the same moment in each
     private static void record(byte[] data, byte direction) {
-        synchronized (Recording.class) {
-            if (out == null) return;
+        long now = System.currentTimeMillis();
+        for (Sink sink : sinks) {
             try {
-                RecordingFile.writeEntry(out, (int) (System.currentTimeMillis() - start), direction, data);
+                sink.write(now, direction, data);
             } catch (IOException e) {
-                log.error("Failed to write {}, stopping", file, e);
-                stop();
+                log.error("Failed to write {}, stopping it", sink.file(), e);
+                close(sink);
             }
         }
     }
 
     // in-world key and mouse button presses, as GLFW reports them; GUI input and mouse motion are not recorded
-    public static synchronized void recordInput(byte device, int code, boolean pressed) {
-        if (out == null) return;
-        try {
-            RecordingFile.writeEntry(out, (int) (System.currentTimeMillis() - start), RecordingFile.INPUT,
-                    new byte[]{device, (byte) (code >> 24), (byte) (code >> 16), (byte) (code >> 8), (byte) code, (byte) (pressed ? 1 : 0)});
-        } catch (IOException e) {
-            log.error("Failed to write {}, stopping", file, e);
-            stop();
-        }
+    public static void recordInput(byte device, int code, boolean pressed) {
+        if (sinks.isEmpty()) return;
+        record(new byte[]{device, (byte) (code >> 24), (byte) (code >> 16), (byte) (code >> 8), (byte) code, (byte) (pressed ? 1 : 0)}, RecordingFile.INPUT);
     }
 
     public record Mark(int number, long elapsed) {
     }
 
-    // "here": a point to come back to, with what the player meant by it if they said; null when nothing is recording
-    public static synchronized Mark mark(byte source, String label) {
-        if (out == null) return null;
-        long elapsed = System.currentTimeMillis() - start;
-        try {
-            RecordingFile.writeEntry(out, (int) elapsed, RecordingFile.MARKER, RecordingFile.marker(source, label));
-        } catch (IOException e) {
-            log.error("Failed to write {}, stopping", file, e);
-            stop();
-            return null;
+    // "here": a point to come back to, with what the player meant by it if they said, in every open recording.
+    // Each sink numbers and times it its own way; empty when nothing is recording
+    public static Map<Sink, Mark> mark(byte source, String label) {
+        long now = System.currentTimeMillis();
+        Map<Sink, Mark> marks = new HashMap<>();
+        for (Sink sink : sinks) {
+            try {
+                Mark mark = sink.mark(now, source, label);
+                if (mark != null) marks.put(sink, mark);
+            } catch (IOException e) {
+                log.error("Failed to write {}, stopping it", sink.file(), e);
+                close(sink);
+            }
         }
-        return new Mark(++markers, elapsed);
+        return marks;
+    }
+
+    // the one started from the pause menu, else null
+    public static Sink manual() {
+        return manual;
     }
 
     // what the configuration phase left behind; a replay's client rebuilds its registries from exactly this
@@ -485,9 +570,5 @@ public final class Recording {
             if (!stack.isEmpty()) slots.add(Pair.of(slot, stack.copy()));
         }
         if (!slots.isEmpty()) packets.add(new ClientboundSetEquipmentPacket(entity.getId(), slots));
-    }
-
-    private static void chat(Minecraft mc, Component message) {
-        mc.gui.getChat().addClientSystemMessage(message);
     }
 }

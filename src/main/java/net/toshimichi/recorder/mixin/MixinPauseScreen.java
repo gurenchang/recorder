@@ -4,6 +4,7 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import net.toshimichi.recorder.Config;
 import net.toshimichi.recorder.Recording;
 import net.toshimichi.recorder.Replay;
 import net.toshimichi.recorder.gui.SeekSlider;
@@ -30,13 +31,19 @@ public abstract class MixinPauseScreen extends Screen {
         if (disconnectButton == null) return; // the menu is hidden (F3 + Esc)
         int x = disconnectButton.getX(), y = disconnectButton.getY() + 24, w = disconnectButton.getWidth();
         Replay replay = Replay.current();
+        int half = (w - 4) / 2;
         if (replay == null) {
+            // the two run independently: starting or stopping one leaves the other as it was
             addRenderableWidget(Button.builder(recordLabel(), button -> {
                 Recording.toggle(minecraft);
                 button.setMessage(recordLabel());
-            }).bounds(x, y, w, 20).build());
+            }).bounds(x, y, half, 20).build());
+            addRenderableWidget(Button.builder(bufferLabel(), button -> {
+                Config.get().bufferEnabled = !Config.get().bufferEnabled;
+                Config.save();
+                button.setMessage(bufferLabel());
+            }).bounds(x + w - half, y, half, 20).build());
         } else {
-            int half = (w - 4) / 2;
             addRenderableWidget(Button.builder(pauseLabel(replay), button -> {
                 replay.togglePause();
                 button.setMessage(pauseLabel(replay));
@@ -51,6 +58,10 @@ public abstract class MixinPauseScreen extends Screen {
 
     private static Component recordLabel() {
         return Component.literal(Recording.isRecording() ? "Stop Recording" : "Start Recording");
+    }
+
+    private static Component bufferLabel() {
+        return Component.literal("Replay Buffer: " + (Config.get().bufferEnabled ? "ON" : "OFF"));
     }
 
     private static Component gameModeLabel(Replay replay) {

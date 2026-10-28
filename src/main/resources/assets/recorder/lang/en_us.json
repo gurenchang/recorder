@@ -1,4 +1,5 @@
 {
   "key.category.recorder.recorder": "Recorder",
-  "key.recorder.marker": "Add Marker"
+  "key.recorder.marker": "Add Marker",
+  "key.recorder.save_buffer": "Save Replay Buffer"
 }

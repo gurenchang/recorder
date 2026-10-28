@@ -1,7 +1,10 @@
 # Recorder `.mcrc` file format
 
 Written by the Recorder mod for Minecraft 26.1.2. Files live in
-`<.minecraft>/recordings/<yyyy-MM-dd_HH-mm-ss>.mcrc`, one per recording. Everything is
+`<.minecraft>/recordings/<yyyy-MM-dd_HH-mm-ss>.mcrc`, one per recording. Saves of the replay
+buffer are `<yyyy-MM-dd_HH-mm-ss>-buffer.mcrc` in the same folder, named after the moment the
+saved stretch starts; they are ordinary recordings, header and snapshot included. The
+buffer's working files in `recordings/.buffer/` are not meant to be read. Everything is
 big-endian. The reference implementation is `net/toshimichi/recorder/RecordingFile.java`
 in this jar.
 

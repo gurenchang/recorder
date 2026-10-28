@@ -13,6 +13,7 @@ import net.minecraft.network.chat.Component;
 import net.toshimichi.recorder.JsonlExport;
 import net.toshimichi.recorder.Recording;
 import net.toshimichi.recorder.Replay;
+import net.toshimichi.recorder.ReplayBuffer;
 import org.slf4j.Logger;
 
 import java.io.File;
@@ -32,6 +33,7 @@ public class RecordingsScreen extends Screen {
     private Button deleteButton;
     private Button convertButton;
     private Button exportButton;
+    private Button saveBufferButton;
     private Component status = Component.empty();
     // an export outlives the screen it was started from; reopening shows how it is going
     private static volatile boolean exporting;
@@ -54,8 +56,10 @@ public class RecordingsScreen extends Screen {
                 .bounds(width / 2 + 54, height - 52, 100, 20).build());
         exportButton = addRenderableWidget(Button.builder(Component.literal("Export JSONL"), button -> export())
                 .bounds(width / 2 - 154, height - 28, 100, 20).build());
+        saveBufferButton = addRenderableWidget(Button.builder(Component.literal("Save Buffer"), button -> saveBuffer())
+                .bounds(width / 2 - 50, height - 28, 100, 20).build());
         addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, button -> onClose())
-                .bounds(width / 2 - 50, height - 28, 204, 20).build());
+                .bounds(width / 2 + 54, height - 28, 100, 20).build());
         updateButtons();
     }
 
@@ -75,6 +79,15 @@ public class RecordingsScreen extends Screen {
     // an export rebuilds the recording's registries, as a replay does: one at a time
     private void updateButtons() {
         replayButton.active = convertButton.active = deleteButton.active = exportButton.active = selected() != null && !exporting;
+        // what the replay buffer held when the last connection closed, a kick included
+        saveBufferButton.active = ReplayBuffer.hasClosed();
+    }
+
+    private void saveBuffer() {
+        ReplayBuffer.saveClosed(minecraft, message -> {
+            status = message;
+            if (minecraft.screen == this) minecraft.setScreen(this); // re-runs init, which lists the new file
+        });
     }
 
     @Override
