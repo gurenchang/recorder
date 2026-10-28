@@ -9,6 +9,7 @@ This is a port of [Toshimichi0915/recorder](https://github.com/Toshimichi0915/re
 ## Usage
 
 - **Record:** in-game, open the pause menu and press **Start Recording** (under Disconnect). It stops on **Stop Recording** or when you disconnect. Files go to `.minecraft/recordings/<date>.mcrc`. Works on servers and in singleplayer.
+- **Mark:** while recording, press **F7** (Add Marker) to mark the moment, or type `/recmark <text>` to mark it with a label. The action bar shows the marker's number and time; replays show it again when they pass it. The key can be changed under **Recorder** in Controls.
 - **Replay:** on the title screen, press **R** (left of Multiplayer), pick a recording and press **Replay**. You watch as a spectator; left-click an entity to see through its eyes, sneak to let go. The pause menu then has Pause/Resume, a seek slider and a game mode switch, and Disconnect leaves the replay.
 - **Convert to World:** in the same screen, saves every chunk the recording loaded into a new single player world (creative, with void everywhere else).
 

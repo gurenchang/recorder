@@ -4,6 +4,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import net.toshimichi.recorder.RecordingFile;
 import net.toshimichi.recorder.Replay;
 
 // follows the replay while left alone; jumps on release so dragging does not reload the world per pixel
@@ -31,7 +32,7 @@ public class SeekSlider extends AbstractSliderButton {
 
     @Override
     protected void updateMessage() {
-        setMessage(Component.literal(format(target()) + " / " + format(replay.duration())));
+        setMessage(Component.literal(RecordingFile.formatTime(target()) + " / " + RecordingFile.formatTime(replay.duration())));
     }
 
     @Override
@@ -54,10 +55,5 @@ public class SeekSlider extends AbstractSliderButton {
 
     private long target() {
         return (long) (value * replay.duration());
-    }
-
-    private static String format(long millis) {
-        long seconds = millis / 1000;
-        return String.format("%d:%02d", seconds / 60, seconds % 60);
     }
 }

@@ -131,6 +131,7 @@ public final class Recording {
     private static volatile Channel channel;
     private static long start;
     private static File file;
+    private static int markers; // numbered per recording, from 1
 
     private Recording() {
     }
@@ -163,6 +164,7 @@ public final class Recording {
         directory().mkdirs();
         file = new File(directory(), new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(new Date()) + ".mcrc");
         start = System.currentTimeMillis();
+        markers = 0;
 
         DataOutputStream stream = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(file)));
         // listen first: whatever arrives from here on is applied after the snapshot, so it must be recorded;
@@ -269,6 +271,23 @@ public final class Recording {
             log.error("Failed to write {}, stopping", file, e);
             stop();
         }
+    }
+
+    public record Mark(int number, long elapsed) {
+    }
+
+    // "here": a point to come back to, with what the player meant by it if they said; null when nothing is recording
+    public static synchronized Mark mark(byte source, String label) {
+        if (out == null) return null;
+        long elapsed = System.currentTimeMillis() - start;
+        try {
+            RecordingFile.writeEntry(out, (int) elapsed, RecordingFile.MARKER, RecordingFile.marker(source, label));
+        } catch (IOException e) {
+            log.error("Failed to write {}, stopping", file, e);
+            stop();
+            return null;
+        }
+        return new Mark(++markers, elapsed);
     }
 
     // what the configuration phase left behind; a replay's client rebuilds its registries from exactly this

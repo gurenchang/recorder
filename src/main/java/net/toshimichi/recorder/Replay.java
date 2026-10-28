@@ -128,6 +128,7 @@ public final class Replay {
     private Puppet puppet;
     // the recorded player's own metadata, which is the puppet's: flags, pose, skin layers. Outlives the puppet across respawns
     private final Map<Integer, SynchedEntityData.DataValue<?>> ownData = new LinkedHashMap<>();
+    private int markers; // passed so far, to number them as the recorder did
     private boolean clickWasDown;
     private BlockPos digPos; // the puppet's cracks: the server shows them to everyone but the digger
     private long digStart;
@@ -339,11 +340,16 @@ public final class Replay {
         digPos = null;
         ownData.clear();
         health = 0;
+        markers = 0;
         index = 0;
     }
 
     private void feed(RecordingFile.Entry entry) {
-        if (entry.direction == RecordingFile.INPUT) return; // key presses, not packets
+        if (entry.direction == RecordingFile.MARKER) {
+            marker(entry);
+            return;
+        }
+        if (!entry.isPacket()) return; // key presses, and whatever rows a newer writer adds
         try {
             PacketListener listener = connection.getPacketListener();
             if (entry.isConfiguration()) {
@@ -361,6 +367,19 @@ public final class Replay {
         } catch (Exception e) {
             log.warn("Skipping a packet at {}ms", entry.time, e);
         }
+    }
+
+    // shown as it is passed; a jump past several shows the last
+    private void marker(RecordingFile.Entry entry) {
+        markers++;
+        if (export != null) return; // converting draws nothing
+        String label = "";
+        try {
+            label = RecordingFile.readMarker(entry.data).label();
+        } catch (IOException e) {
+            log.warn("Unreadable marker at {}ms", entry.time, e);
+        }
+        mc.gui.setOverlayMessage(Component.literal("Marker #" + markers + (label.isEmpty() ? "" : ": " + label)), false);
     }
 
     // nothing in a replay may leave it: no disconnects, transfers, resource pack downloads or screens to click through
@@ -534,7 +553,7 @@ public final class Replay {
         boolean snap = true;
         int self = Integer.MIN_VALUE;
         for (RecordingFile.Entry entry : entries) {
-            if (entry.direction == RecordingFile.INPUT || entry.isConfiguration()) continue;
+            if (!entry.isPacket() || entry.isConfiguration()) continue;
             int id = Protocols.packetId(entry.data);
             try {
                 if (!entry.isServerbound()) {

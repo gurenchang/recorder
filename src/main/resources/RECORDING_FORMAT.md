@@ -64,6 +64,11 @@ tail; everything before it is intact.
 | 4 | clientbound, configuration | raw packet from server to client |
 | 5 | serverbound, configuration | raw packet from client to server |
 | 6 | snapshot, configuration | synthetic clientbound configuration packet, see below |
+| 7 | marker | a point the player marked, see below |
+
+**Readers must skip rows whose direction they do not know.** New kinds of row are added as
+new direction values without changing the header `version`, so an older reader keeps working
+on a newer file by ignoring what it does not understand.
 
 Configuration rows appear when the server sends the client back to the configuration phase
 mid-session (a proxy switching servers, for one), and again in the snapshot.
@@ -132,6 +137,19 @@ Key codes are GLFW `GLFW_KEY_*` values (W = 87, A = 65, S = 83, D = 68, Space = 
 Left Shift = 340, Left Control = 341, Escape = 256). They share the same `time` base as
 packets, so a key press can be matched against the movement packets it caused.
 
+## Marker entries (direction 7)
+
+A point the player marked while recording ("here"), with a label if they gave one. Markers
+share the same `time` base as packets.
+
+```
+uint8   source    0 key (the Add Marker key binding, F7 by default), 1 command (/recmark <text>)
+string  label     uint16 byte count, then that many bytes of Java modified UTF-8; empty for a key
+```
+
+Markers are numbered from 1 in file order; the recorder shows that number when one is made
+("Marker #3 at 1:23.450") and the replay shows it again when playback passes it.
+
 ## Minimal reader (Python)
 
 ```python
@@ -183,4 +201,8 @@ for start, t, direction, data in read_mcrc("recording.mcrc"):
     elif direction == 3:
         device, code, pressed = struct.unpack(">BiB", data)
         print(t, "key" if device == 0 else "mouse", code, "down" if pressed else "up")
+    elif direction == 7:
+        source, size = struct.unpack(">BH", data[:3])
+        print(t, "marker", "key" if source == 0 else "command", data[3:3 + size].decode("utf-8"))
+    # any other direction: skip it
 ```

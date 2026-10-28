@@ -7,8 +7,11 @@ import com.mojang.authlib.properties.Property;
 import com.mojang.authlib.properties.PropertyMap;
 
 import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutput;
+import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.File;
 import java.io.FileInputStream;
@@ -33,11 +36,13 @@ import java.util.UUID;
  *   int   time since start, millis
  *   byte  direction: 0 clientbound, 1 serverbound, 2 synthetic clientbound (world snapshot taken at start),
  *                    3 input event, 4 clientbound configuration, 5 serverbound configuration,
- *                    6 synthetic clientbound configuration (registry snapshot taken at start)
+ *                    6 synthetic clientbound configuration (registry snapshot taken at start), 7 marker
  *   int   length
  *   bytes packet exactly as it crossed the wire after decryption and decompression: varint id + payload;
- *         for an input event: byte device (0 keyboard, 1 mouse), int GLFW key or button code, byte pressed
+ *         for an input event: byte device (0 keyboard, 1 mouse), int GLFW key or button code, byte pressed;
+ *         for a marker: byte source (0 key, 1 command), UTF label (empty for a key)
  * </pre>
+ * Readers skip rows whose direction they do not know; new kinds of row are added that way, without a new version.
  */
 public final class RecordingFile {
 
@@ -51,8 +56,11 @@ public final class RecordingFile {
     public static final byte CONFIGURATION_CLIENTBOUND = 4;
     public static final byte CONFIGURATION_SERVERBOUND = 5;
     public static final byte CONFIGURATION_SNAPSHOT = 6;
+    public static final byte MARKER = 7;
     public static final byte KEYBOARD = 0;
     public static final byte MOUSE = 1;
+    public static final byte MARKER_KEY = 0;
+    public static final byte MARKER_COMMAND = 1;
 
     public static final class Entry {
 
@@ -68,6 +76,12 @@ public final class RecordingFile {
 
         public boolean isConfiguration() {
             return direction == CONFIGURATION_CLIENTBOUND || direction == CONFIGURATION_SERVERBOUND || direction == CONFIGURATION_SNAPSHOT;
+        }
+
+        // a row the network codecs can read: anything else (input, markers, rows from a newer writer) is not a packet
+        public boolean isPacket() {
+            return direction == CLIENTBOUND || direction == SERVERBOUND || direction == SNAPSHOT
+                    || direction == CONFIGURATION_CLIENTBOUND || direction == CONFIGURATION_SERVERBOUND || direction == CONFIGURATION_SNAPSHOT;
         }
 
         public boolean isServerbound() {
@@ -90,7 +104,28 @@ public final class RecordingFile {
         }
     }
 
+    public record Marker(byte source, String label) {
+    }
+
     private RecordingFile() {
+    }
+
+    public static byte[] marker(byte source, String label) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeByte(source);
+        out.writeUTF(label);
+        return bytes.toByteArray();
+    }
+
+    // m:ss.mmm, precise enough to point at a moment by ear: "at 1:23.450"
+    public static String formatTime(long millis) {
+        return String.format("%d:%02d.%03d", millis / 60000, millis / 1000 % 60, millis % 1000);
+    }
+
+    public static Marker readMarker(byte[] data) throws IOException {
+        DataInputStream in = new DataInputStream(new ByteArrayInputStream(data));
+        return new Marker(in.readByte(), in.readUTF());
     }
 
     public static void writeHeader(DataOutput out, long startMillis, int protocol, String gameVersion, GameProfile profile) throws IOException {
